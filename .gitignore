@@ -1,0 +1,14 @@
+.env
+google_token.json
+*.log
+conversation_log.md
+.claude/
+instagram_briefs/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
