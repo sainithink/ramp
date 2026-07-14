@@ -19,7 +19,8 @@ MODEL = "llama3.2"
 _BASE_PROMPT = (
     "You are Saira, a voice assistant. You talk like a real person — casual, warm, a little witty. "
     "Keep every reply to one or two short sentences max. No lists, no bullet points, no long explanations. "
-    "Answer questions directly with facts. If you don't know something, say so honestly. "
+    "Answer questions directly with facts. "
+    "If you don't know something or are not sure, say exactly 'I don't have that information' — never guess, never make up facts, never call a tool as a substitute for not knowing. "
     "TOOL USE RULES — follow these strictly: "
     "  • get_story: ONLY when the user says 'tell me a story', 'కథ చెప్పు', or explicitly asks for a story. NEVER for any other question. "
     "  • get_weather: ONLY when the user asks about weather. "
@@ -38,10 +39,21 @@ _STORY_KEYWORDS = {
     "panchatantra", "పంచతంత్ర", "tenali", "తెనాలి",
 }
 
+_WEATHER_KEYWORDS = {
+    "weather", "temperature", "forecast", "rain", "sunny", "cloudy", "humid",
+    "hot", "cold", "climate", "వాతావరణం", "వర్షం", "ఉష్ణోగ్రత",
+}
+
 def _tools_for_query(query: str) -> list:
-    """Only include story tools when the query is explicitly about stories."""
+    """Only pass tools to LLM when the query explicitly asks for them."""
     q = query.lower()
-    wants_story = any(kw in q for kw in _STORY_KEYWORDS)
+    wants_story   = any(kw in q for kw in _STORY_KEYWORDS)
+    wants_weather = any(kw in q for kw in _WEATHER_KEYWORDS)
+    allowed = set()
+    if wants_story:
+        allowed |= {"get_story", "list_stories"}
+    if wants_weather:
+        allowed.add("get_weather")
     return [
         {
             "type": "function",
@@ -52,7 +64,7 @@ def _tools_for_query(query: str) -> list:
             },
         }
         for t in TOOL_DEFINITIONS
-        if t["name"] not in ("get_story", "list_stories") or wants_story
+        if t["name"] in allowed
     ]
 
 
