@@ -25,7 +25,7 @@ NOTEPAD_PATH = "./conversation_log.md"
 SAMPLE_RATE  = 16000
 
 # Silence detection via PCM RMS
-SILENCE_THRESHOLD    = 0.01   # RMS below this = silence
+SILENCE_THRESHOLD    = 0.02   # RMS below this = silence (raised to ignore background TV)
 SILENCE_FRAMES_NEEDED = 15    # 15 × ~100ms = ~1.5s of silence to stop
 MIN_SPEECH_FRAMES    = 4      # must hear speech before silence counts
 
@@ -113,8 +113,27 @@ async def voice_endpoint(ws: WebSocket):
     log.info(">>> WebSocket connected")
     session = VoiceSession(ws=ws)
 
-    mode           = "wake"
+    mode           = "wake"   # wake | command | processing
+    listening_mode = "jarvis" # jarvis | always_on
     response_task  = None
+
+    # Command-mode state (shared between receive loop and run_response)
+    webm_header    = None
+    command_raw    = []
+    cmd_raw_chunks = []
+    cmd_processed  = 0
+    cmd_pcm_buf    = []
+    silence_frames = 0
+    speech_frames  = 0
+
+    def _reset_command_state():
+        nonlocal command_raw, cmd_raw_chunks, cmd_processed, cmd_pcm_buf, silence_frames, speech_frames
+        command_raw    = []
+        cmd_raw_chunks = [webm_header] if webm_header else []
+        cmd_processed  = 0
+        cmd_pcm_buf    = []
+        silence_frames = 0
+        speech_frames  = 0
 
     async def send_json(payload: dict):
         try:
@@ -145,9 +164,15 @@ async def voice_endpoint(ws: WebSocket):
             log.exception("Pipeline error: %s", exc)
             await send_json({"type": "status", "state": "error"})
         finally:
-            mode = "wake"
-            await send_json({"type": "status", "state": "wake"})
-            log.info(">>> Back to wake mode")
+            if listening_mode == "always_on":
+                _reset_command_state()
+                mode = "command"
+                await send_json({"type": "status", "state": "always_on"})
+                log.info(">>> Always-on: back to continuous listening")
+            else:
+                mode = "wake"
+                await send_json({"type": "status", "state": "wake"})
+                log.info(">>> Back to wake mode")
 
     async def transcribe_command(raw_chunks: list[bytes], header: bytes) -> None:
         nonlocal mode
@@ -155,33 +180,35 @@ async def voice_endpoint(ws: WebSocket):
         pcm = await asyncio.to_thread(_webm_to_pcm16k, webm)
         if pcm.size == 0:
             log.warning("Empty PCM after decode — skipping")
-            mode = "wake"
-            await send_json({"type": "status", "state": "wake"})
+            if listening_mode == "always_on":
+                _reset_command_state()
+                mode = "command"
+                await send_json({"type": "status", "state": "always_on"})
+            else:
+                mode = "wake"
+                await send_json({"type": "status", "state": "wake"})
             return
         # Auto-detect language for commands (supports Telugu + English)
         text = await asyncio.to_thread(_transcribe_pcm, pcm, True, None)
         text = _strip_wake_word(text).strip()
         log.info("Command transcript: '%s'", text)
         if not text:
-            mode = "wake"
-            await send_json({"type": "status", "state": "wake"})
+            if listening_mode == "always_on":
+                _reset_command_state()
+                mode = "command"
+                await send_json({"type": "status", "state": "always_on"})
+            else:
+                mode = "wake"
+                await send_json({"type": "status", "state": "wake"})
             return
         asyncio.create_task(run_response(text))
 
     async def receive_audio_task():
-        nonlocal mode, response_task
+        nonlocal mode, response_task, webm_header, listening_mode
+        nonlocal command_raw, cmd_raw_chunks, cmd_processed, cmd_pcm_buf, silence_frames, speech_frames
 
-        webm_header      = None
         wake_window      = []       # last WAKE_WINDOW_SIZE raw chunks
         wake_check_count = 0
-
-        # Command-mode state
-        command_raw      = []   # raw WebM chunks for command
-        cmd_pcm_buf      = []   # decoded PCM frames during command
-        cmd_processed    = 0    # PCM samples already seen
-        cmd_raw_chunks   = []   # webm chunks in command buffer (for decode)
-        silence_frames   = 0
-        speech_frames    = 0
 
         await send_json({"type": "status", "state": "wake"})
 
@@ -190,13 +217,40 @@ async def voice_endpoint(ws: WebSocket):
                 msg = await ws.receive()
                 if msg["type"] == "websocket.disconnect":
                     break
+
+                # ── Handle text control messages ───────────────────────
+                text_msg = msg.get("text")
+                if text_msg:
+                    try:
+                        ctrl = json.loads(text_msg)
+                        if ctrl.get("type") == "set_listening_mode":
+                            new_mode = ctrl.get("mode", "jarvis")
+                            listening_mode = new_mode
+                            log.info(">>> Listening mode changed to: %s", listening_mode)
+                            if listening_mode == "always_on":
+                                _reset_command_state()
+                                mode = "command"
+                                wake_window = []
+                                wake_check_count = 0
+                                await send_json({"type": "status", "state": "always_on"})
+                            else:
+                                mode = "wake"
+                                wake_window = []
+                                wake_check_count = 0
+                                await send_json({"type": "status", "state": "wake"})
+                    except Exception:
+                        pass
+                    continue
+
                 chunk = msg.get("bytes")
                 if not chunk:
                     continue
 
-                # Save WebM header (first chunk ever)
+                # Save WebM header (first chunk ever) — skip it as audio data
                 if webm_header is None:
                     webm_header = chunk
+                    cmd_raw_chunks = [webm_header]
+                    continue
 
                 # ── PROCESSING: ignore incoming audio ──────────────────
                 if mode == "processing":
@@ -231,12 +285,7 @@ async def voice_endpoint(ws: WebSocket):
                                     # Just "Hey Jarvis" — wait for command
                                     log.info(">>> Wake word only — entering command mode")
                                     mode = "command"
-                                    command_raw    = []
-                                    cmd_raw_chunks = [webm_header]
-                                    cmd_processed  = 0
-                                    cmd_pcm_buf    = []
-                                    silence_frames = 0
-                                    speech_frames  = 0
+                                    _reset_command_state()
                                     wake_window    = []
                                     wake_check_count = 0
                                     await send_json({"type": "status", "state": "listening"})
@@ -266,14 +315,10 @@ async def voice_endpoint(ws: WebSocket):
                             log.info(">>> Silence detected — transcribing %d cmd chunks", len(command_raw))
                             mode = "processing"
                             chunks_to_transcribe = command_raw[:]
-                            command_raw  = []
-                            cmd_raw_chunks = [webm_header]
-                            cmd_processed = 0
-                            cmd_pcm_buf  = []
-                            silence_frames = 0
-                            speech_frames  = 0
+                            hdr = webm_header
+                            _reset_command_state()
                             await send_json({"type": "status", "state": "thinking"})
-                            asyncio.create_task(transcribe_command(chunks_to_transcribe, webm_header))
+                            asyncio.create_task(transcribe_command(chunks_to_transcribe, hdr))
 
         except WebSocketDisconnect:
             pass

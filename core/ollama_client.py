@@ -7,6 +7,7 @@ from typing import AsyncIterator, Callable, Awaitable, Optional
 
 import httpx
 from core.profile import get_profile_text
+from core.dpo_examples import get_few_shot_examples
 from tools import TOOL_DEFINITIONS, dispatch
 
 log = logging.getLogger(__name__)
@@ -40,11 +41,16 @@ _OLLAMA_TOOLS = [
 ]
 
 
-def _build_system_prompt() -> str:
+def _build_system_prompt(user_query: str = "") -> str:
+    parts = [_BASE_PROMPT]
     profile = get_profile_text()
     if profile:
-        return f"{_BASE_PROMPT}\n\n{profile}"
-    return _BASE_PROMPT
+        parts.append(profile)
+    if user_query:
+        few_shot = get_few_shot_examples(user_query)
+        if few_shot:
+            parts.append(few_shot)
+    return "\n\n".join(parts)
 
 
 async def get_response(
@@ -53,7 +59,7 @@ async def get_response(
     session,
     on_tool_call: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> AsyncIterator[str]:
-    messages = [{"role": "system", "content": _build_system_prompt()}]
+    messages = [{"role": "system", "content": _build_system_prompt(transcript)}]
     messages += list(history)
     messages.append({"role": "user", "content": transcript})
 

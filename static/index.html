@@ -218,10 +218,11 @@
       color: var(--cyan); font-size: .58rem; letter-spacing: .15em;
       transition: all .3s;
     }
-    #state-badge.listening { color: #00ff9d; border-color: #00ff9d; box-shadow: 0 0 8px rgba(0,255,157,.3); }
-    #state-badge.thinking  { color: #ffb347; border-color: #ffb347; box-shadow: 0 0 8px rgba(255,179,71,.3); }
-    #state-badge.speaking  { color: var(--cyan); border-color: var(--cyan); box-shadow: 0 0 8px rgba(0,212,255,.4); }
-    #state-badge.error     { color: #ff4c4c; border-color: #ff4c4c; }
+    #state-badge.listening  { color: #00ff9d; border-color: #00ff9d; box-shadow: 0 0 8px rgba(0,255,157,.3); }
+    #state-badge.always_on  { color: #00ff9d; border-color: #00ff9d; box-shadow: 0 0 12px rgba(0,255,157,.5); }
+    #state-badge.thinking   { color: #ffb347; border-color: #ffb347; box-shadow: 0 0 8px rgba(255,179,71,.3); }
+    #state-badge.speaking   { color: var(--cyan); border-color: var(--cyan); box-shadow: 0 0 8px rgba(0,212,255,.4); }
+    #state-badge.error      { color: #ff4c4c; border-color: #ff4c4c; }
 
     /* Pulse ring when speaking/listening */
     .pulse-ring {
@@ -274,37 +275,27 @@
     #transcript { color: rgba(0,212,255,.6); font-style: italic; }
     #response   { color: #d0eeff; }
 
-    /* PTT button */
-    #ptt {
+    /* Mode toggle button */
+    #mode-toggle {
       font-family: 'Orbitron', sans-serif;
-      font-size: .65rem; letter-spacing: .2em;
-      width: 90px; height: 90px; border-radius: 50%;
-      border: 2px solid var(--border);
+      font-size: .58rem; letter-spacing: .15em;
+      padding: 8px 18px;
+      border: 1px solid var(--border);
       background: rgba(0,212,255,.05);
-      color: var(--cyan);
+      color: var(--dim);
       cursor: pointer;
-      transition: all .15s;
-      box-shadow: 0 0 20px rgba(0,212,255,.1), inset 0 0 20px rgba(0,212,255,.05);
-      position: relative;
-      user-select: none; -webkit-user-select: none;
-      flex-shrink: 0;
-      display: flex; align-items: center; justify-content: center;
-      text-align: center; line-height: 1.4;
+      border-radius: 3px;
+      transition: all .2s;
+      text-transform: uppercase;
+      white-space: nowrap;
     }
-    #ptt::before {
-      content: '';
-      position: absolute; inset: 6px; border-radius: 50%;
-      border: 1px solid rgba(0,212,255,.2);
+    #mode-toggle:hover { border-color: var(--cyan); color: var(--cyan); }
+    #mode-toggle.always-on {
+      background: rgba(0,255,157,.08);
+      border-color: #00ff9d;
+      color: #00ff9d;
+      box-shadow: 0 0 12px rgba(0,255,157,.2);
     }
-    #ptt:hover { box-shadow: 0 0 30px rgba(0,212,255,.25), inset 0 0 20px rgba(0,212,255,.1); border-color: var(--cyan); }
-    #ptt.active {
-      background: rgba(0,212,255,.15);
-      border-color: var(--cyan);
-      box-shadow: 0 0 40px rgba(0,212,255,.5), inset 0 0 30px rgba(0,212,255,.2);
-      color: #fff;
-      transform: scale(.96);
-    }
-    #ptt:disabled { opacity: .35; cursor: not-allowed; }
 
     /* Audio level bar */
     #audio-level-wrap {
@@ -442,7 +433,7 @@
     <div class="tool-row"><span class="dot off" id="conn-dot"></span><span id="conn-label">OFFLINE</span></div>
     <div style="margin-top:8px; font-size:.58rem; color:var(--dim); line-height:1.6">
       ENDPOINT<br>
-      <span style="color:var(--cyan)">ws://localhost:3002</span>
+      <span style="color:var(--cyan)">ws://localhost:3001</span>
     </div>
   </div>
 
@@ -477,6 +468,8 @@
       <span id="response">Systems nominal. Ready for your command.</span>
     </div>
   </div>
+
+  <button id="mode-toggle" onclick="toggleListeningMode()">JARVIS MODE</button>
 
   <div id="mic-status" style="font-size:.6rem;letter-spacing:.15em;color:var(--dim);margin-top:4px">INITIALIZING MIC…</div>
 
@@ -636,24 +629,43 @@
   const ringWrap = document.getElementById('ring-wrap');
   const connDot = document.getElementById('conn-dot');
   const connLabel = document.getElementById('conn-label');
+  let listeningMode = 'jarvis'; // 'jarvis' | 'always_on'
 
   function setState(state) {
     const labels = {
       wake:      'SAY "HEY JARVIS"',
       listening: 'LISTENING…',
+      always_on: 'ALWAYS LISTENING',
       thinking:  'PROCESSING',
       speaking:  'TRANSMITTING',
       error:     'ERROR',
     };
     badge.textContent = labels[state] ?? state.toUpperCase();
     badge.className = state;
-    if (state === 'listening') {
+    if (state === 'listening' || state === 'always_on') {
       ringWrap.classList.add('active-pulse');
     } else {
       ringWrap.classList.remove('active-pulse');
     }
     document.getElementById('dot-deepgram').className = state !== 'error' ? 'dot' : 'dot off';
     document.getElementById('dot-tts').className      = state === 'speaking' ? 'dot' : 'dot off';
+  }
+
+  function toggleListeningMode() {
+    listeningMode = listeningMode === 'jarvis' ? 'always_on' : 'jarvis';
+    const btn = document.getElementById('mode-toggle');
+    if (listeningMode === 'always_on') {
+      btn.textContent = 'ALWAYS ON';
+      btn.classList.add('always-on');
+      addLog('Switched to Always-On mode', 'info');
+    } else {
+      btn.textContent = 'JARVIS MODE';
+      btn.classList.remove('always-on');
+      addLog('Switched to Jarvis wake-word mode', 'info');
+    }
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'set_listening_mode', mode: listeningMode }));
+    }
   }
 
   // ── Audio playback ────────────────────────────────────────────────
@@ -741,7 +753,7 @@
       micActive = true;
       status.textContent = 'MIC ACTIVE';
       status.style.color = 'var(--cyan)';
-      addLog('Microphone active — say "Hey Jarvis"', 'info');
+      addLog('Microphone active — say "Hey Jarvis" or switch to Always-On', 'info');
       startLevelMeter();
     } catch(e) {
       status.textContent = 'MIC DENIED — allow in browser settings & reload';
@@ -805,7 +817,7 @@
           queryCount++;
           document.getElementById('stat-queries').textContent = queryCount;
         }
-        if (msg.state === 'wake') {
+        if (msg.state === 'wake' || msg.state === 'always_on') {
           playCollectedAudio();
         }
 

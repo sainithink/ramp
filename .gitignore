@@ -6,6 +6,7 @@ google_token.json
 *.onnx
 *.bin
 conversation_log.md
+data/
 .claude/
 instagram_briefs/
 __pycache__/
