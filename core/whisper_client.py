@@ -18,7 +18,7 @@ from faster_whisper import WhisperModel
 
 log = logging.getLogger(__name__)
 
-MODEL_SIZE = os.environ.get("WHISPER_MODEL", "base")
+MODEL_SIZE = os.environ.get("WHISPER_MODEL", "small")
 
 
 def _load_model() -> WhisperModel:
@@ -59,39 +59,48 @@ def _decode_webm_to_pcm(webm_bytes: bytes) -> np.ndarray:
     return np.concatenate(samples)
 
 
-def _transcribe(webm_bytes: bytes) -> str:
-    pcm = _decode_webm_to_pcm(webm_bytes)
-    if pcm.size == 0:
-        return ""
-
-    # Write to a temp WAV so faster-whisper can read it
+def _pcm_to_wav(pcm: np.ndarray) -> str:
+    """Write float32 or int16 PCM → temp WAV file, return path."""
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         wav_path = f.name
+    container = av.open(wav_path, mode="w")
+    stream = container.add_stream("pcm_s16le", rate=16000)
+    stream.layout = "mono"
+    if pcm.dtype == np.float32:
+        pcm = (pcm * 32767).clip(-32768, 32767).astype(np.int16)
+    frame = av.AudioFrame.from_ndarray(pcm.reshape(1, -1), format="s16", layout="mono")
+    frame.sample_rate = 16000
+    for packet in stream.encode(frame):
+        container.mux(packet)
+    for packet in stream.encode(None):
+        container.mux(packet)
+    container.close()
+    return wav_path
 
+
+def _transcribe_pcm(pcm: np.ndarray, vad: bool = True, language: str | None = None) -> str:
+    if pcm.size == 0:
+        return ""
+    wav_path = _pcm_to_wav(pcm)
     try:
-        container = av.open(wav_path, mode="w")
-        stream = container.add_stream("pcm_s16le", rate=16000)
-        stream.layout = "mono"
-
-        # Convert float32 → int16
-        pcm_int16 = (pcm * 32767).clip(-32768, 32767).astype(np.int16)
-        frame = av.AudioFrame.from_ndarray(
-            pcm_int16.reshape(1, -1), format="s16", layout="mono"
-        )
-        frame.sample_rate = 16000
-        for packet in stream.encode(frame):
-            container.mux(packet)
-        for packet in stream.encode(None):
-            container.mux(packet)
-        container.close()
-
         model = get_model()
-        segments, _ = model.transcribe(wav_path, beam_size=5, language="en")
+        kwargs: dict = {"beam_size": 5, "task": "transcribe"}
+        if language:
+            kwargs["language"] = language
+        if vad:
+            kwargs["vad_filter"] = True
+            kwargs["vad_parameters"] = {"threshold": 0.3, "min_silence_duration_ms": 300}
+        segments, _ = model.transcribe(wav_path, **kwargs)
         text = " ".join(s.text for s in segments).strip()
         log.info("Whisper transcript: '%s'", text)
         return text
     finally:
         os.unlink(wav_path)
+
+
+def _transcribe(webm_bytes: bytes) -> str:
+    pcm = _decode_webm_to_pcm(webm_bytes)
+    return _transcribe_pcm(pcm)
 
 
 class WhisperStreamer:
@@ -112,13 +121,22 @@ class WhisperStreamer:
         if not self._chunks or self._on_final_transcript is None:
             self._chunks = []
             return
-
         webm_bytes = b"".join(self._chunks)
         self._chunks = []
-
         try:
             text = await asyncio.to_thread(_transcribe, webm_bytes)
             if text:
                 await self._on_final_transcript(text)
         except Exception as exc:
             log.exception("Whisper transcription error: %s", exc)
+
+    async def close_from_pcm(self, pcm: np.ndarray) -> None:
+        """Transcribe directly from a PCM array (int16, 16kHz) — skips WebM decode."""
+        if self._on_final_transcript is None:
+            return
+        try:
+            text = await asyncio.to_thread(_transcribe_pcm, pcm)
+            if text:
+                await self._on_final_transcript(text)
+        except Exception as exc:
+            log.exception("Whisper PCM transcription error: %s", exc)

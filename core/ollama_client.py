@@ -9,20 +9,30 @@ import logging
 from typing import AsyncIterator, Callable, Awaitable, Optional
 
 import httpx
+from core.profile import get_profile_text
 
 log = logging.getLogger(__name__)
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
 MODEL = "llama3.2"
 
-SYSTEM_PROMPT = (
+_BASE_PROMPT = (
     "You are Jarvis, a voice assistant. You talk like a real person — casual, warm, a little witty. "
     "Keep every reply to one or two short sentences max. No lists, no bullet points, no long explanations. "
     "If data comes back from a tool, pick the two or three most interesting numbers and mention just those. "
     "Never read out everything — summarise like you're telling a friend. "
-    "Occasionally call the user Lahari or ma'am, never sir. "
-    "If something fails, say so in one sentence and move on. Never show errors or technical details."
+    "If you know the user's name, use it occasionally but not every time. "
+    "If something fails, say so in one sentence and move on. Never show errors or technical details. "
+    "IMPORTANT: If the user speaks or asks in Telugu, reply entirely in Telugu script. "
+    "If the user speaks in English, reply in English."
 )
+
+
+def _build_system_prompt() -> str:
+    profile = get_profile_text()
+    if profile:
+        return f"{_BASE_PROMPT}\n\n{profile}"
+    return _BASE_PROMPT
 
 
 async def get_response(
@@ -32,7 +42,7 @@ async def get_response(
     on_tool_call: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> AsyncIterator[str]:
     """Stream a response from the local Ollama model."""
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages = [{"role": "system", "content": _build_system_prompt()}]
     messages += list(history)
     messages.append({"role": "user", "content": transcript})
 

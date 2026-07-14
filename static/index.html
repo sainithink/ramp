@@ -288,6 +288,8 @@
       position: relative;
       user-select: none; -webkit-user-select: none;
       flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      text-align: center; line-height: 1.4;
     }
     #ptt::before {
       content: '';
@@ -303,6 +305,22 @@
       transform: scale(.96);
     }
     #ptt:disabled { opacity: .35; cursor: not-allowed; }
+
+    /* Audio level bar */
+    #audio-level-wrap {
+      width: 100%; max-width: 260px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    #audio-level-label { font-size:.58rem; color:var(--dim); flex-shrink:0; }
+    #audio-level-track {
+      flex:1; height:6px; background:rgba(0,212,255,.1); border-radius:3px; overflow:hidden;
+    }
+    #audio-level-fill {
+      height:100%; border-radius:3px; width:0%;
+      background: linear-gradient(90deg, #0066ff, #00d4ff);
+      box-shadow: 0 0 6px var(--cyan);
+      transition: width 0.08s ease;
+    }
 
     /* ── Right column ──────────────────────────────────────────────── */
     .col-right {
@@ -424,7 +442,7 @@
     <div class="tool-row"><span class="dot off" id="conn-dot"></span><span id="conn-label">OFFLINE</span></div>
     <div style="margin-top:8px; font-size:.58rem; color:var(--dim); line-height:1.6">
       ENDPOINT<br>
-      <span style="color:var(--cyan)">ws://localhost:8000</span>
+      <span style="color:var(--cyan)">ws://localhost:3002</span>
     </div>
   </div>
 
@@ -460,7 +478,12 @@
     </div>
   </div>
 
-  <button id="ptt" disabled>HOLD<br>TALK</button>
+  <div id="mic-status" style="font-size:.6rem;letter-spacing:.15em;color:var(--dim);margin-top:4px">INITIALIZING MIC…</div>
+
+  <div id="audio-level-wrap" style="display:none">
+    <span id="audio-level-label">MIC</span>
+    <div id="audio-level-track"><div id="audio-level-fill"></div></div>
+  </div>
 
 </main>
 
@@ -491,17 +514,17 @@
 <footer>
   <div class="footer-section">
     <div class="footer-label">Model</div>
-    <div class="footer-val">CLAUDE HAIKU 4.5</div>
+    <div class="footer-val">LLAMA 3.2 (LOCAL)</div>
   </div>
   <div class="sep"></div>
   <div class="footer-section">
     <div class="footer-label">STT Engine</div>
-    <div class="footer-val">DEEPGRAM NOVA-2</div>
+    <div class="footer-val">WHISPER BASE</div>
   </div>
   <div class="sep"></div>
   <div class="footer-section">
     <div class="footer-label">TTS Engine</div>
-    <div class="footer-val">ELEVENLABS TURBO</div>
+    <div class="footer-val">KOKORO ONNX</div>
   </div>
   <div class="sep"></div>
   <div class="footer-section">
@@ -616,27 +639,39 @@
 
   function setState(state) {
     const labels = {
-      standby:   'STANDBY',
-      listening: 'LISTENING',
+      wake:      'SAY "HEY JARVIS"',
+      listening: 'LISTENING…',
       thinking:  'PROCESSING',
       speaking:  'TRANSMITTING',
       error:     'ERROR',
     };
     badge.textContent = labels[state] ?? state.toUpperCase();
     badge.className = state;
-    if (state === 'listening' || state === 'speaking') {
+    if (state === 'listening') {
       ringWrap.classList.add('active-pulse');
     } else {
       ringWrap.classList.remove('active-pulse');
     }
-    // Toggle tool dots
-    document.getElementById('dot-deepgram').className = state !== 'standby' && state !== 'error' ? 'dot' : 'dot off';
+    document.getElementById('dot-deepgram').className = state !== 'error' ? 'dot' : 'dot off';
     document.getElementById('dot-tts').className      = state === 'speaking' ? 'dot' : 'dot off';
   }
 
-  // ── Audio playback (blob-based, works in all browsers) ────────────
+  // ── Audio playback ────────────────────────────────────────────────
   const player = document.getElementById('player');
   let audioChunks = [], audioPlayTimer = null;
+  let audioUnlocked = false;
+
+  // Unlock audio context on first user interaction
+  function unlockAudio() {
+    if (audioUnlocked) return;
+    audioUnlocked = true;
+    // Prime the audio element so it can autoplay later
+    player.src = 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4LjI5LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV6urq6urq6urq6urq6urq6urq6urq6urq6v////////////////////////////////8AAAAATGF2YzU4LjU0AAAAAAAAAAAAAAAAJAAAAAAAAAAAASDs90hvAAAAAAAAAAAAAAAAAAAA//MUZAAAAAGkAAAAAAAAA0gAAAAATEFN//MUZAMAAAGkAAAAAAAAA0gAAAAARTMu//MUZAYAAAGkAAAAAAAAA0gAAAAAOTku//MUZAkAAAGkAAAAAAAAA0gAAAAANVVV';
+    player.play().catch(() => {});
+    player.src = '';
+  }
+
+  document.addEventListener('click', unlockAudio, { once: true });
 
   function initMediaSource() {
     clearTimeout(audioPlayTimer);
@@ -646,7 +681,6 @@
 
   function appendAudio(ab) {
     audioChunks.push(ab);
-    // Play 300ms after the last chunk arrives, not on status message (race condition)
     clearTimeout(audioPlayTimer);
     audioPlayTimer = setTimeout(playCollectedAudio, 300);
   }
@@ -661,139 +695,76 @@
     audioChunks = [];
   }
 
-  // ── Mic / MediaRecorder ────────────────────────────────────────────
-  const ptt   = document.getElementById('ptt');
+  // ── Mic / always-on streaming ──────────────────────────────────────
   const transcriptEl = document.getElementById('transcript');
   const responseEl   = document.getElementById('response');
   let ws, mediaRecorder, micStream;
+  let micActive = false;
+  let currentMode = 'wake';
 
-  // ── Clap detection ─────────────────────────────────────────────────
-  // Watches for 2 sharp amplitude spikes (claps) 300–900ms apart.
-  // On detection, auto-starts voice capture; Deepgram endpointing stops it.
-  let clapAudioCtx, clapAnalyser, clapData, clapMonitorId;
-  let lastClapTime = 0, clapArmed = false, clapListening = false;
+  function startLevelMeter() {
+    const fill = document.getElementById('audio-level-fill');
+    const wrap = document.getElementById('audio-level-wrap');
+    wrap.style.display = 'flex';
+    const levelBuf = new Uint8Array(analyser.frequencyBinCount);
+    function tick() {
+      if (!micActive) return;
+      analyser.getByteFrequencyData(levelBuf);
+      let sum = 0;
+      for (let i = 0; i < levelBuf.length; i++) sum += levelBuf[i];
+      fill.style.width = Math.min(100, (sum / levelBuf.length) * 2) + '%';
+      requestAnimationFrame(tick);
+    }
+    tick();
+  }
 
-  const CLAP_THRESHOLD   = 0.55;  // 0–1 normalised amplitude
-  const CLAP_MIN_GAP_MS  = 150;   // ignore double-trigger within same clap
-  const CLAP_MAX_GAP_MS  = 900;   // two claps must land within this window
-  const CLAP_COOLDOWN_MS = 2000;  // ignore claps while Jarvis is already active
-
-  async function startClapDetector() {
-    if (clapMonitorId) return; // already running
+  async function activateMic() {
+    if (micActive) return;
+    const status = document.getElementById('mic-status');
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      clapAudioCtx = new AudioContext();
-      const src = clapAudioCtx.createMediaStreamSource(stream);
-      clapAnalyser = clapAudioCtx.createAnalyser();
-      clapAnalyser.fftSize = 256;
-      clapData = new Float32Array(clapAnalyser.fftSize);
-      src.connect(clapAnalyser);
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      audioCtxWave = new (window.AudioContext || window.webkitAudioContext)();
+      const src = audioCtxWave.createMediaStreamSource(micStream);
+      analyser = audioCtxWave.createAnalyser();
+      analyser.fftSize = 1024;
+      dataArray = new Uint8Array(analyser.frequencyBinCount);
+      src.connect(analyser);
 
-      let lastPeak = false;
-      function monitor() {
-        clapMonitorId = requestAnimationFrame(monitor);
-        clapAnalyser.getFloatTimeDomainData(clapData);
-        let peak = 0;
-        for (let i = 0; i < clapData.length; i++) {
-          const v = Math.abs(clapData[i]);
-          if (v > peak) peak = v;
-        }
-        const now = Date.now();
-        const isLoud = peak > CLAP_THRESHOLD;
-
-        // Rising edge only (first frame above threshold)
-        if (isLoud && !lastPeak) {
-          // Don't detect while Jarvis is already talking / recording
-          if (!clapListening && !(mediaRecorder && mediaRecorder.state === 'recording')) {
-            const gap = now - lastClapTime;
-            if (gap > CLAP_MIN_GAP_MS) {
-              if (clapArmed && gap < CLAP_MAX_GAP_MS) {
-                // Second clap — fire!
-                clapArmed = false;
-                clapListening = true;
-                addLog('Clap activated — listening', 'info');
-                triggerClapListen();
-                setTimeout(() => { clapListening = false; }, CLAP_COOLDOWN_MS);
-              } else {
-                // First clap — arm
-                clapArmed = true;
-                setTimeout(() => { clapArmed = false; }, CLAP_MAX_GAP_MS + 50);
-              }
-              lastClapTime = now;
-            }
-          }
-        }
-        lastPeak = isLoud;
-      }
-      monitor();
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus' : 'audio/webm';
+      mediaRecorder = new MediaRecorder(micStream, { mimeType });
+      mediaRecorder.ondataavailable = e => {
+        if (e.data.size > 0 && ws && ws.readyState === WebSocket.OPEN)
+          ws.send(e.data);
+      };
+      mediaRecorder.start(100);
+      micActive = true;
+      status.textContent = 'MIC ACTIVE';
+      status.style.color = 'var(--cyan)';
+      addLog('Microphone active — say "Hey Jarvis"', 'info');
+      startLevelMeter();
     } catch(e) {
-      console.warn('[Jarvis] Clap detector: mic not available yet', e);
+      status.textContent = 'MIC DENIED — allow in browser settings & reload';
+      status.style.color = '#ff4c4c';
+      console.error('[Jarvis] Mic error:', e);
     }
   }
 
-  async function triggerClapListen() {
-    if (ws.readyState !== WebSocket.OPEN) return;
-    await startTalk();
-    // Auto-stop after 6 s if user doesn't speak (Deepgram endpointing usually fires sooner)
-    setTimeout(() => {
-      if (mediaRecorder && mediaRecorder.state === 'recording') stopTalk();
-    }, 6000);
+  // Auto-start mic as soon as page loads (requires user gesture in some browsers)
+  // We trigger on first click anywhere on the page
+  let micTriggered = false;
+  document.addEventListener('click', () => {
+    if (!micTriggered) { micTriggered = true; activateMic(); }
+  }, { once: true });
+
+  // Also try immediately if permission already granted
+  async function tryAutoMic() {
+    try {
+      const r = await navigator.permissions.query({ name: 'microphone' });
+      if (r.state === 'granted') activateMic();
+    } catch(e) {}
   }
-
-  async function startTalk() {
-    console.log('[Jarvis] startTalk() fired, ws.readyState=', ws.readyState, 'ptt.disabled=', ptt.disabled);
-    if (ws.readyState !== WebSocket.OPEN) {
-      console.warn('[Jarvis] WS not open, cannot start');
-      addLog('WS not ready — try refreshing', 'error');
-      return;
-    }
-    if (!micStream) {
-      try {
-        console.log('[Jarvis] Requesting microphone...');
-        micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-        console.log('[Jarvis] Microphone granted');
-        audioCtxWave = new AudioContext();
-        const src = audioCtxWave.createMediaStreamSource(micStream);
-        analyser = audioCtxWave.createAnalyser();
-        analyser.fftSize = 1024;
-        dataArray = new Uint8Array(analyser.frequencyBinCount);
-        src.connect(analyser);
-      } catch(e) {
-        console.error('[Jarvis] Microphone denied:', e);
-        addLog('Microphone permission denied!', 'error');
-        alert('Microphone access denied. Click the camera/mic icon in the Chrome address bar and allow access.');
-        return;
-      }
-    }
-    ptt.classList.add('active');
-    ws.send(JSON.stringify({ type: 'start' }));
-    addLog('Voice input started', 'info');
-    console.log('[Jarvis] Sent start, starting MediaRecorder...');
-
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus' : 'audio/webm';
-    console.log('[Jarvis] Using mimeType:', mimeType);
-    mediaRecorder = new MediaRecorder(micStream, { mimeType });
-    mediaRecorder.ondataavailable = e => {
-      if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) ws.send(e.data);
-    };
-    mediaRecorder.start(100);
-    console.log('[Jarvis] MediaRecorder started');
-  }
-
-  function stopTalk() {
-    console.log('[Jarvis] stopTalk() fired');
-    if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
-    ptt.classList.remove('active');
-    mediaRecorder.stop();
-    ws.send(JSON.stringify({ type: 'stop' }));
-  }
-
-  ptt.addEventListener('mousedown',  startTalk);
-  ptt.addEventListener('mouseup',    stopTalk);
-  ptt.addEventListener('mouseleave', stopTalk);
-  ptt.addEventListener('touchstart', e => { e.preventDefault(); startTalk(); }, { passive: false });
-  ptt.addEventListener('touchend',   e => { e.preventDefault(); stopTalk();  }, { passive: false });
+  tryAutoMic();
 
   // ── WebSocket ──────────────────────────────────────────────────────
   function connect() {
@@ -803,20 +774,16 @@
     ws.onopen = () => {
       connDot.className = 'dot';
       connLabel.textContent = 'ONLINE';
-      ptt.disabled = false;
-      setState('standby');
+      setState('wake');
       addLog('WebSocket connected', 'info');
-      addLog('Tip: clap twice to activate voice', 'info');
       document.getElementById('dot-weather').className   = 'dot';
       document.getElementById('dot-calendar').className  = 'dot';
       document.getElementById('dot-instagram').className = 'dot';
-      startClapDetector();
     };
 
     ws.onclose = () => {
       connDot.className = 'dot off';
       connLabel.textContent = 'OFFLINE';
-      ptt.disabled = true;
       setState('error');
       addLog('Connection lost — retrying…', 'error');
       setTimeout(connect, 3000);
@@ -832,12 +799,13 @@
       const msg = JSON.parse(event.data);
 
       if (msg.type === 'status') {
+        currentMode = msg.state;
         setState(msg.state);
         if (msg.state === 'thinking') {
           queryCount++;
           document.getElementById('stat-queries').textContent = queryCount;
         }
-        if (msg.state === 'listening') {
+        if (msg.state === 'wake') {
           playCollectedAudio();
         }
 

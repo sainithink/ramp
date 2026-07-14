@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
     google_token_json_path: str = "./google_token.json"
     host: str = "127.0.0.1"
-    port: int = 8000
+    port: int = 3002
 
 
 settings = Settings()
