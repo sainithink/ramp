@@ -1,46 +1,44 @@
 # J.A.R.V.I.S — Local Voice AI Assistant
 
-A local voice assistant built with FastAPI, Deepgram STT, Claude AI, and ElevenLabs TTS.
-Push-to-talk (or double-clap) to speak, Jarvis answers out loud.
+A fully local voice assistant built with FastAPI. No cloud APIs or API keys required — everything runs on your machine.
 
-## Features
-- Voice-activated with Push-to-Talk button or double-clap
-- Powered by Claude Haiku (fast + cheap)
-- Tools: weather lookup, Google Calendar (read & create events)
-- Sci-fi HUD frontend
+## Stack
+| Component | Technology |
+|---|---|
+| Speech-to-text | faster-whisper (Whisper `base` model, CPU) |
+| AI brain | Ollama + `llama3.2` |
+| Text-to-speech | Kokoro ONNX (`af_heart` voice) |
+| Weather data | Open-Meteo (free public API, no key) |
+| Frontend | Sci-fi HUD with push-to-talk + double-clap |
 
 ## Setup
 
 ### 1. Python 3.8+
 ```bash
 python -m venv .venv
-.venv\Scripts\activate        # Windows
-# source .venv/bin/activate   # Mac/Linux
+source .venv/bin/activate   # Mac/Linux
+# .venv\Scripts\activate    # Windows
 pip install -r requirements.txt
 ```
 
-### 2. Environment variables
+### 2. Ollama (local LLM)
 ```bash
-cp .env.example .env
-# Edit .env and fill in all your API keys
+brew install ollama          # Mac
+ollama serve                 # start the service
+ollama pull llama3.2         # download the model (~2 GB)
 ```
 
-### 3. Google Calendar
+### 3. Kokoro model files
+Download into the project root:
 ```bash
-python scripts/auth_google.py
-# Opens a browser OAuth flow — saves google_token.json
+wget https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.int8.onnx
+wget https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
 ```
 
 ### 4. Run
 ```bash
 python scripts/debug_server.py
-# Then open http://localhost:8000
+# Open http://localhost:8000
 ```
 
-## API Keys needed
-| Service | Purpose | Link |
-|---|---|---|
-| Deepgram | Speech-to-text | console.deepgram.com |
-| Anthropic | Claude AI brain | console.anthropic.com |
-| ElevenLabs | Voice synthesis | elevenlabs.io |
-| Google Cloud | Calendar access | console.cloud.google.com |
+Models load automatically on first startup. Whisper and Kokoro cache to `~/.cache/huggingface/` after the first run.
