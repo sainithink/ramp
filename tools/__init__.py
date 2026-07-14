@@ -17,7 +17,8 @@ TOOL_DEFINITIONS = [
         "name": "get_story",
         "description": (
             "Tell a Telugu story from the local library. "
-            "Use when the user asks for a story, కథ చెప్పు, కథ వినాలి, etc."
+            "ONLY use this tool when the user EXPLICITLY asks for a story, కథ చెప్పు, కథ వినాలి, "
+            "or uses the word 'story'/'కథ'. Do NOT use for questions, facts, how-to, visa, weather, or any other topic."
         ),
         "input_schema": {
             "type": "object",
