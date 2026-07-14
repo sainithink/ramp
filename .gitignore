@@ -1,6 +1,8 @@
 .env
 .profile.key
 profile.enc
+.memory.key
+memory.enc
 google_token.json
 *.log
 *.onnx

@@ -8,6 +8,7 @@ from typing import AsyncIterator, Callable, Awaitable, Optional
 import httpx
 from core.profile import get_profile_text
 from core.dpo_examples import get_few_shot_examples
+from core.memory import get_relevant_context
 from tools import TOOL_DEFINITIONS, dispatch
 
 log = logging.getLogger(__name__)
@@ -61,6 +62,9 @@ def _build_system_prompt(user_query: str = "") -> str:
     if profile:
         parts.append(profile)
     if user_query:
+        memory = get_relevant_context(user_query)
+        if memory:
+            parts.append(memory)
         few_shot = get_few_shot_examples(user_query)
         if few_shot:
             parts.append(few_shot)

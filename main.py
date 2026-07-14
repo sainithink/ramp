@@ -17,6 +17,7 @@ from core.whisper_client import get_model, _transcribe_pcm, _decode_webm_to_pcm
 from core.ollama_client import get_response
 from core.kokoro_client import synthesize_stream, get_kokoro
 from core.profile import load_profile
+from core.memory import init as init_memory, save_exchange
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
 log = logging.getLogger(__name__)
@@ -82,6 +83,7 @@ async def lifespan(app: FastAPI):
     await asyncio.gather(
         asyncio.to_thread(get_model),
         asyncio.to_thread(get_kokoro),
+        asyncio.to_thread(init_memory),
     )
     log.info("Saira ready.")
     yield
@@ -159,7 +161,9 @@ async def voice_endpoint(ws: WebSocket):
                     yield delta
 
             await synthesize_stream(text_iter(), session.audio_out_queue)
-            _log_exchange(text, "".join(resp_chunks))
+            full_reply = "".join(resp_chunks)
+            _log_exchange(text, full_reply)
+            await asyncio.to_thread(save_exchange, text, full_reply)
         except Exception as exc:
             log.exception("Pipeline error: %s", exc)
             await send_json({"type": "status", "state": "error"})
