@@ -11,8 +11,8 @@ from fastapi.responses import FileResponse
 
 from core.session import VoiceSession
 from core.whisper_client import WhisperStreamer, get_model
-from core.claude_client import get_response
-from core.elevenlabs_client import synthesize_stream
+from core.ollama_client import get_response
+from core.kokoro_client import synthesize_stream, get_kokoro
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
 log = logging.getLogger(__name__)
@@ -37,8 +37,11 @@ def _log_exchange(user_text: str, jarvis_text: str) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    log.info("Jarvis starting up — pre-loading Whisper model…")
-    await asyncio.to_thread(get_model)
+    log.info("Jarvis starting up — pre-loading models…")
+    await asyncio.gather(
+        asyncio.to_thread(get_model),
+        asyncio.to_thread(get_kokoro),
+    )
     log.info("Jarvis ready.")
     yield
     log.info("Jarvis shutting down")

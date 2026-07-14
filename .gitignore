@@ -1,6 +1,8 @@
 .env
 google_token.json
 *.log
+*.onnx
+*.bin
 conversation_log.md
 .claude/
 instagram_briefs/
