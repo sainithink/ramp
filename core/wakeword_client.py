@@ -1,5 +1,5 @@
 """
-Wake word detection using OpenWakeWord (hey_jarvis model).
+Wake word detection using OpenWakeWord (hey_saira model).
 Processes raw 16kHz PCM chunks from the browser audio stream.
 """
 from __future__ import annotations
@@ -19,8 +19,8 @@ def get_oww():
     global _oww
     if _oww is None:
         from openwakeword.model import Model
-        log.info("Loading hey_jarvis wake word model…")
-        _oww = Model(wakeword_models=["hey_jarvis"], inference_framework="onnx")
+        log.info("Loading hey_saira wake word model…")
+        _oww = Model(wakeword_models=["hey_saira"], inference_framework="onnx")
         log.info("Wake word model ready.")
     return _oww
 
@@ -28,7 +28,7 @@ def get_oww():
 class WakeWordDetector:
     """
     Feed 16kHz mono int16 PCM bytes in chunks.
-    Returns True from process() when 'hey jarvis' is detected.
+    Returns True from process() when 'hey saira' is detected.
     """
 
     def __init__(self):
@@ -50,7 +50,7 @@ class WakeWordDetector:
             chunk_f32 = chunk.astype(np.float32) / 32768.0
             scores = oww.predict(chunk_f32)
 
-            score = scores.get("hey_jarvis", 0.0)
+            score = scores.get("hey_saira", 0.0)
             if score > 0.05:
                 log.info("OWW score=%.3f (threshold=%.2f)", score, THRESHOLD)
             if score >= THRESHOLD:

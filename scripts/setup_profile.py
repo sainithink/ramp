@@ -17,10 +17,10 @@ FIELDS = [
     ("preferences",     "Personal preferences — food, music, etc. (optional)"),
     ("family",          "People close to you — family, partner, friends (optional)"),
     ("goals",           "Things you're working toward or want help with (optional)"),
-    ("notes",           "Anything else Jarvis should know about you (optional)"),
+    ("notes",           "Anything else Saira should know about you (optional)"),
 ]
 
-print("\n=== Jarvis Personal Profile Setup ===")
+print("\n=== Saira Personal Profile Setup ===")
 print("This data is encrypted and stored only on your machine.\n")
 
 existing = {}
@@ -45,4 +45,4 @@ for field, label in FIELDS:
     data[field] = value if value else current
 
 save_profile(data)
-print("\nProfile saved and encrypted. Jarvis will use this context in all conversations.")
+print("\nProfile saved and encrypted. Saira will use this context in all conversations.")

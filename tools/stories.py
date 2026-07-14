@@ -1,4 +1,4 @@
-"""Local Telugu story library tool for Jarvis."""
+"""Local Telugu story library tool for Saira."""
 from __future__ import annotations
 
 import json

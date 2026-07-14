@@ -1,7 +1,7 @@
 """
 Download Human-Like-DPO dataset from HuggingFace and extract chosen responses.
 
-Saves embeddings + examples to data/dpo_examples.json for use in Jarvis.
+Saves embeddings + examples to data/dpo_examples.json for use in Saira.
 
 Run once (or re-run to refresh):
     .venv/bin/python3.14 scripts/fetch_dpo_dataset.py
@@ -157,7 +157,7 @@ def main():
     }
     OUTPUT_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=None))
     print(f"\n✓ Saved {len(examples)} examples → {OUTPUT_PATH}")
-    print("  Run Jarvis now — it will load these automatically.")
+    print("  Run Saira now — it will load these automatically.")
 
 
 if __name__ == "__main__":

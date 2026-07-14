@@ -14,7 +14,7 @@ from core.elevenlabs_client import synthesize_stream
 
 
 async def fake_text_iter():
-    yield "Hello, I am Jarvis. Your systems are online and ready."
+    yield "Hello, I am Saira. Your systems are online and ready."
 
 
 async def main():
@@ -45,7 +45,7 @@ async def main():
         for chunk in chunks:
             f.write(chunk)
     print(f"Saved to: {os.path.abspath(out_path)}")
-    print("Open test_output.mp3 to verify Jarvis's voice sounds correct.")
+    print("Open test_output.mp3 to verify Saira's voice sounds correct.")
 
 
 asyncio.run(main())

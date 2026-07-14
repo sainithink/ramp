@@ -40,7 +40,7 @@ def save_profile(data: dict) -> None:
 def load_profile() -> str:
     global _profile_text
     if not PROFILE_ENC.exists():
-        log.warning("No profile.enc found — Jarvis has no personal context.")
+        log.warning("No profile.enc found — Saira has no personal context.")
         return ""
     try:
         key    = _get_or_create_key()

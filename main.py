@@ -34,16 +34,16 @@ WAKE_CHECK_CHUNKS = 20        # check every 20 × 100ms = 2s
 WAKE_WINDOW_SIZE  = 40        # 4s rolling window
 
 
-def _log_exchange(user_text: str, jarvis_text: str) -> None:
+def _log_exchange(user_text: str, saira_text: str) -> None:
     try:
         is_new = not os.path.exists(NOTEPAD_PATH)
         with open(NOTEPAD_PATH, "a", encoding="utf-8") as f:
             if is_new:
-                f.write("# Jarvis Conversation Log\n\n")
+                f.write("# Saira Conversation Log\n\n")
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             f.write(f"---\n**[{ts}]**\n\n")
             f.write(f"**User:** {user_text}\n\n")
-            f.write(f"**Jarvis:** {jarvis_text}\n\n")
+            f.write(f"**Saira:** {saira_text}\n\n")
     except Exception as exc:
         log.warning("Failed to write conversation log: %s", exc)
 
@@ -65,27 +65,27 @@ def _webm_to_pcm16k(webm_bytes: bytes) -> np.ndarray:
         return np.array([], dtype=np.int16)
 
 
-def _contains_jarvis(text: str) -> bool:
-    return "jarvis" in text.lower()
+def _contains_saira(text: str) -> bool:
+    return "saira" in text.lower()
 
 
 def _strip_wake_word(text: str) -> str:
-    """Remove leading 'hey jarvis' or 'jarvis' from transcript."""
+    """Remove leading 'hey saira' or 'saira' from transcript."""
     import re
-    return re.sub(r"^(hey\s+)?jarvis[,!.]*\s*", "", text, flags=re.IGNORECASE).strip()
+    return re.sub(r"^(hey\s+)?saira[,!.]*\s*", "", text, flags=re.IGNORECASE).strip()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    log.info("Jarvis starting up…")
+    log.info("Saira starting up…")
     load_profile()
     await asyncio.gather(
         asyncio.to_thread(get_model),
         asyncio.to_thread(get_kokoro),
     )
-    log.info("Jarvis ready.")
+    log.info("Saira ready.")
     yield
-    log.info("Jarvis shutting down")
+    log.info("Saira shutting down")
 
 
 app = FastAPI(lifespan=lifespan)
@@ -114,7 +114,7 @@ async def voice_endpoint(ws: WebSocket):
     session = VoiceSession(ws=ws)
 
     mode           = "wake"   # wake | command | processing
-    listening_mode = "jarvis" # jarvis | always_on
+    listening_mode = "saira" # saira | always_on
     response_task  = None
 
     # Command-mode state (shared between receive loop and run_response)
@@ -224,7 +224,7 @@ async def voice_endpoint(ws: WebSocket):
                     try:
                         ctrl = json.loads(text_msg)
                         if ctrl.get("type") == "set_listening_mode":
-                            new_mode = ctrl.get("mode", "jarvis")
+                            new_mode = ctrl.get("mode", "saira")
                             listening_mode = new_mode
                             log.info(">>> Listening mode changed to: %s", listening_mode)
                             if listening_mode == "always_on":
@@ -268,10 +268,10 @@ async def voice_endpoint(ws: WebSocket):
                         buf = b"".join([webm_header] + wake_window)
                         pcm = await asyncio.to_thread(_webm_to_pcm16k, buf)
                         if pcm.size > 0:
-                            # English-locked, no VAD — finds "jarvis" reliably
+                            # English-locked, no VAD — finds "saira" reliably
                             text = await asyncio.to_thread(_transcribe_pcm, pcm, False, "en")
                             log.info("Wake window: '%s'", text)
-                            if text and _contains_jarvis(text):
+                            if text and _contains_saira(text):
                                 command = _strip_wake_word(text).strip()
                                 if command:
                                     # Question already in wake phrase — respond immediately
@@ -282,7 +282,7 @@ async def voice_endpoint(ws: WebSocket):
                                     await send_json({"type": "status", "state": "thinking"})
                                     asyncio.create_task(run_response(command))
                                 else:
-                                    # Just "Hey Jarvis" — wait for command
+                                    # Just "Hey Saira" — wait for command
                                     log.info(">>> Wake word only — entering command mode")
                                     mode = "command"
                                     _reset_command_state()

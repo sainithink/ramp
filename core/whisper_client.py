@@ -18,7 +18,7 @@ from faster_whisper import WhisperModel
 
 log = logging.getLogger(__name__)
 
-MODEL_SIZE = os.environ.get("WHISPER_MODEL", "small")
+MODEL_SIZE = os.environ.get("WHISPER_MODEL", "small.en")
 
 
 def _load_model() -> WhisperModel:
@@ -89,7 +89,7 @@ def _transcribe_pcm(pcm: np.ndarray, vad: bool = True, language: str | None = No
             kwargs["language"] = language
         if vad:
             kwargs["vad_filter"] = True
-            kwargs["vad_parameters"] = {"threshold": 0.3, "min_silence_duration_ms": 300}
+            kwargs["vad_parameters"] = {"threshold": 0.5, "min_silence_duration_ms": 500}
         segments, _ = model.transcribe(wav_path, **kwargs)
         text = " ".join(s.text for s in segments).strip()
         log.info("Whisper transcript: '%s'", text)

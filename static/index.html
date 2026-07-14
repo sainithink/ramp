@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>J.A.R.V.I.S</title>
+  <title>S.A.I.R.A</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap');
 
@@ -391,7 +391,7 @@
 
 <!-- ── HEADER ─────────────────────────────────────────────────────── -->
 <header>
-  <div class="logo">J<span>.</span>A<span>.</span>R<span>.</span>V<span>.</span>I<span>.</span>S</div>
+  <div class="logo">S<span>.</span>A<span>.</span>I<span>.</span>R<span>.</span>A</div>
   <div class="hdr-center">ADVANCED AI VOICE INTERFACE · v2.0</div>
   <div class="hdr-right">SYS OK &nbsp;|&nbsp; <span id="clock">--:--:--</span></div>
 </header>
@@ -448,7 +448,7 @@
     <div class="ring ring-3"></div>
     <div class="pulse-ring"></div>
     <div class="core-inner">
-      <div class="core-name">JARVIS</div>
+      <div class="core-name">SAIRA</div>
       <div class="core-sub">AI CORE · ONLINE</div>
       <div class="core-status">
         <div id="state-badge">STANDBY</div>
@@ -464,12 +464,12 @@
       <span id="transcript">Awaiting voice input…</span>
     </div>
     <div class="speech-box" id="response-box">
-      <span class="tag">JARVIS OUTPUT</span>
+      <span class="tag">SAIRA OUTPUT</span>
       <span id="response">Systems nominal. Ready for your command.</span>
     </div>
   </div>
 
-  <button id="mode-toggle" onclick="toggleListeningMode()">JARVIS MODE</button>
+  <button id="mode-toggle" onclick="toggleListeningMode()">SAIRA MODE</button>
 
   <div id="mic-status" style="font-size:.6rem;letter-spacing:.15em;color:var(--dim);margin-top:4px">INITIALIZING MIC…</div>
 
@@ -629,11 +629,11 @@
   const ringWrap = document.getElementById('ring-wrap');
   const connDot = document.getElementById('conn-dot');
   const connLabel = document.getElementById('conn-label');
-  let listeningMode = 'jarvis'; // 'jarvis' | 'always_on'
+  let listeningMode = 'saira'; // 'saira' | 'always_on'
 
   function setState(state) {
     const labels = {
-      wake:      'SAY "HEY JARVIS"',
+      wake:      'SAY "HEY SAIRA"',
       listening: 'LISTENING…',
       always_on: 'ALWAYS LISTENING',
       thinking:  'PROCESSING',
@@ -652,16 +652,16 @@
   }
 
   function toggleListeningMode() {
-    listeningMode = listeningMode === 'jarvis' ? 'always_on' : 'jarvis';
+    listeningMode = listeningMode === 'saira' ? 'always_on' : 'saira';
     const btn = document.getElementById('mode-toggle');
     if (listeningMode === 'always_on') {
       btn.textContent = 'ALWAYS ON';
       btn.classList.add('always-on');
       addLog('Switched to Always-On mode', 'info');
     } else {
-      btn.textContent = 'JARVIS MODE';
+      btn.textContent = 'SAIRA MODE';
       btn.classList.remove('always-on');
-      addLog('Switched to Jarvis wake-word mode', 'info');
+      addLog('Switched to Saira wake-word mode', 'info');
     }
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'set_listening_mode', mode: listeningMode }));
@@ -753,12 +753,12 @@
       micActive = true;
       status.textContent = 'MIC ACTIVE';
       status.style.color = 'var(--cyan)';
-      addLog('Microphone active — say "Hey Jarvis" or switch to Always-On', 'info');
+      addLog('Microphone active — say "Hey Saira" or switch to Always-On', 'info');
       startLevelMeter();
     } catch(e) {
       status.textContent = 'MIC DENIED — allow in browser settings & reload';
       status.style.color = '#ff4c4c';
-      console.error('[Jarvis] Mic error:', e);
+      console.error('[Saira] Mic error:', e);
     }
   }
 
