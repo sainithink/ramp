@@ -5,12 +5,10 @@ No external API needed.
 """
 from __future__ import annotations
 
-import asyncio
 import io
 import logging
 import os
 import tempfile
-from typing import Callable, Awaitable, Optional
 
 import av
 import numpy as np
@@ -98,45 +96,3 @@ def _transcribe_pcm(pcm: np.ndarray, vad: bool = True, language: str | None = No
         os.unlink(wav_path)
 
 
-def _transcribe(webm_bytes: bytes) -> str:
-    pcm = _decode_webm_to_pcm(webm_bytes)
-    return _transcribe_pcm(pcm)
-
-
-class WhisperStreamer:
-    """Drop-in replacement for DeepgramStreamer using local Whisper."""
-
-    def __init__(self):
-        self._chunks: list[bytes] = []
-        self._on_final_transcript: Optional[Callable[[str], Awaitable[None]]] = None
-
-    async def open(self, on_final_transcript: Callable[[str], Awaitable[None]]) -> None:
-        self._on_final_transcript = on_final_transcript
-        self._chunks = []
-
-    def send_audio(self, data: bytes) -> None:
-        self._chunks.append(data)
-
-    async def close(self) -> None:
-        if not self._chunks or self._on_final_transcript is None:
-            self._chunks = []
-            return
-        webm_bytes = b"".join(self._chunks)
-        self._chunks = []
-        try:
-            text = await asyncio.to_thread(_transcribe, webm_bytes)
-            if text:
-                await self._on_final_transcript(text)
-        except Exception as exc:
-            log.exception("Whisper transcription error: %s", exc)
-
-    async def close_from_pcm(self, pcm: np.ndarray) -> None:
-        """Transcribe directly from a PCM array (int16, 16kHz) — skips WebM decode."""
-        if self._on_final_transcript is None:
-            return
-        try:
-            text = await asyncio.to_thread(_transcribe_pcm, pcm)
-            if text:
-                await self._on_final_transcript(text)
-        except Exception as exc:
-            log.exception("Whisper PCM transcription error: %s", exc)

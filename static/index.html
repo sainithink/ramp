@@ -410,7 +410,7 @@
     <div class="panel-title">Connection</div>
     <div class="tool-row"><span class="dot off" id="conn-dot"></span><span id="conn-label">OFFLINE</span></div>
     <div style="margin-top:9px;font-size:.54rem;color:var(--g-dim);line-height:1.8">
-      ENDPOINT<br><span style="color:var(--g1)">ws://localhost:3001</span>
+      ENDPOINT<br><span style="color:var(--g1)">ws://localhost:3000</span>
     </div>
   </div>
 </aside>
@@ -496,7 +496,7 @@
 <footer>
   <div class="footer-section">
     <div class="footer-label">Model</div>
-    <div class="footer-val">LLAMA 3.2 LOCAL</div>
+    <div class="footer-val">GEMMA 2B LOCAL</div>
   </div>
   <div class="sep"></div>
   <div class="footer-section">
@@ -649,7 +649,7 @@ function toggleListeningMode() {
     addLog('Switched to Saira wake-word mode');
   }
   if (ws && ws.readyState===WebSocket.OPEN)
-    ws.send(JSON.stringify({type:'set_listening_mode', mode: listeningMode==='saira'?'jarvis':'always_on'}));
+    ws.send(JSON.stringify({type:'set_listening_mode', mode: listeningMode}));
 }
 
 // ── Audio playback ────────────────────────────────────────────────────────────

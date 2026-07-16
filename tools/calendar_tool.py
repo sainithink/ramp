@@ -76,16 +76,13 @@ def _create_event_sync(title: str, start_iso: str, end_iso: str, description: st
         "start": {"dateTime": _ensure_tz(start_iso)},
         "end": {"dateTime": _ensure_tz(end_iso)},
     }
-    created = service.events().insert(calendarId="primary", body=event_body).execute()
-    link = created.get("htmlLink", "")
+    service.events().insert(calendarId="primary", body=event_body).execute()
     return f"Event '{title}' created successfully."
 
 
 async def list_events(max_results: int = 5) -> str:
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _list_events_sync, max_results)
+    return await asyncio.to_thread(_list_events_sync, max_results)
 
 
 async def create_event(title: str, start_iso: str, end_iso: str, description: str = "") -> str:
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _create_event_sync, title, start_iso, end_iso, description)
+    return await asyncio.to_thread(_create_event_sync, title, start_iso, end_iso, description)

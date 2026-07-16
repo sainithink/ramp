@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import os
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime
 
@@ -13,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from core.session import VoiceSession
-from core.whisper_client import get_model, _transcribe_pcm, _decode_webm_to_pcm
+from core.whisper_client import get_model, _transcribe_pcm
 from core.ollama_client import get_response
 from core.kokoro_client import synthesize_stream, get_kokoro
 from core.profile import load_profile
@@ -71,8 +72,6 @@ def _contains_saira(text: str) -> bool:
 
 
 def _strip_wake_word(text: str) -> str:
-    """Remove leading 'hey saira' or 'saira' from transcript."""
-    import re
     return re.sub(r"^(hey\s+)?saira[,!.]*\s*", "", text, flags=re.IGNORECASE).strip()
 
 
@@ -116,8 +115,7 @@ async def voice_endpoint(ws: WebSocket):
     session = VoiceSession(ws=ws)
 
     mode           = "wake"   # wake | command | processing
-    listening_mode = "saira" # saira | always_on
-    response_task  = None
+    listening_mode = "saira"  # saira | always_on
 
     # Command-mode state (shared between receive loop and run_response)
     webm_header    = None
@@ -208,7 +206,7 @@ async def voice_endpoint(ws: WebSocket):
         asyncio.create_task(run_response(text))
 
     async def receive_audio_task():
-        nonlocal mode, response_task, webm_header, listening_mode
+        nonlocal mode, webm_header, listening_mode
         nonlocal command_raw, cmd_raw_chunks, cmd_processed, cmd_pcm_buf, silence_frames, speech_frames
 
         wake_window      = []       # last WAKE_WINDOW_SIZE raw chunks

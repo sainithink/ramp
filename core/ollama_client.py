@@ -136,26 +136,11 @@ async def get_response(
                 # Loop: send tool results back to model
                 continue
 
-            # No tool calls — stream the final text response
+            # No tool calls — yield the already-received content directly
             content = msg.get("content", "")
             if content:
-                # Re-request with streaming for the final answer
-                payload["stream"] = True
-                payload["messages"] = messages
-                async with client.stream("POST", OLLAMA_URL, json=payload) as streamed:
-                    async for line in streamed.aiter_lines():
-                        if not line:
-                            continue
-                        try:
-                            chunk = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        delta = chunk.get("message", {}).get("content", "")
-                        if delta:
-                            full_response.append(delta)
-                            yield delta
-                        if chunk.get("done"):
-                            break
+                full_response.append(content)
+                yield content
             break
 
     full_text = "".join(full_response)
