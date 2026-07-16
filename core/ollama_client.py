@@ -14,7 +14,7 @@ from tools import TOOL_DEFINITIONS, dispatch
 log = logging.getLogger(__name__)
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
-MODEL = "llama3.2"
+MODEL = "gemma:2b-instruct"
 
 _BASE_PROMPT = (
     "You are Saira, a voice assistant. You talk like a real person — casual, warm, a little witty. "
