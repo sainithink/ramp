@@ -44,16 +44,45 @@ _WEATHER_KEYWORDS = {
     "hot", "cold", "climate", "వాతావరణం", "వర్షం", "ఉష్ణోగ్రత",
 }
 
+_YOUTUBE_KEYWORDS = {
+    "play", "put on", "start playing", "youtube", "song", "music", "పాట",
+    "పెట్టు", "వినాలి", "పాట వేయి",
+}
+
+_BROWSER_KEYWORDS = {
+    "open", "go to", "visit", "website", "browse", "తెరు",
+    "search", "google", "look up", "find",
+}
+
+_PC_KEYWORDS = {
+    "open", "launch", "start", "volume", "mute", "unmute", "screenshot",
+    "screen shot", "what's playing", "what is playing", "now playing",
+    "spotify", "chrome", "firefox", "terminal", "vscode",
+}
+
+
 def _tools_for_query(query: str) -> list:
     """Only pass tools to LLM when the query explicitly asks for them."""
     q = query.lower()
     wants_story   = any(kw in q for kw in _STORY_KEYWORDS)
     wants_weather = any(kw in q for kw in _WEATHER_KEYWORDS)
+    wants_youtube = any(kw in q for kw in _YOUTUBE_KEYWORDS)
+    wants_browser = any(kw in q for kw in _BROWSER_KEYWORDS)
+    wants_pc      = any(kw in q for kw in _PC_KEYWORDS)
+
     allowed = set()
     if wants_story:
         allowed |= {"get_story", "list_stories"}
     if wants_weather:
         allowed.add("get_weather")
+    if wants_youtube:
+        allowed.add("play_youtube")
+    if wants_browser:
+        allowed |= {"open_website", "google_search"}
+    if wants_pc:
+        allowed |= {"open_app", "set_volume", "mute_volume", "unmute_volume",
+                    "take_screenshot", "get_now_playing"}
+
     return [
         {
             "type": "function",
