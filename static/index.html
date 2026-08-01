@@ -326,6 +326,30 @@
       box-shadow: 0 0 12px rgba(0,230,118,.18);
     }
 
+    .btn-row { display: flex; gap: 8px; align-items: center; }
+
+    #stop-btn {
+      font-family: 'Orbitron', sans-serif;
+      font-size: .52rem; letter-spacing: .14em;
+      padding: 6px 16px;
+      border: 1px solid rgba(255,82,82,.3);
+      background: rgba(255,82,82,.04);
+      color: rgba(255,82,82,.5); cursor: pointer; border-radius: 3px;
+      transition: all .22s; text-transform: uppercase;
+    }
+    #stop-btn:hover { border-color: #ff5252; color: #ff5252; }
+    /* Light up only while Saira is actually thinking or speaking */
+    body.thinking #stop-btn, body.speaking #stop-btn {
+      border-color: #ff5252; color: #ff5252;
+      background: rgba(255,82,82,.09);
+      box-shadow: 0 0 12px rgba(255,82,82,.2);
+      animation: stopPulse 1.4s ease-in-out infinite;
+    }
+    @keyframes stopPulse {
+      0%,100% { box-shadow: 0 0 8px rgba(255,82,82,.15); }
+      50%     { box-shadow: 0 0 16px rgba(255,82,82,.35); }
+    }
+
     #mic-status { font-size: .56rem; letter-spacing: .12em; color: var(--g-dim); margin-top: -2px; }
 
     #audio-level-wrap { width: 100%; max-width: 240px; display: flex; align-items: center; gap: 8px; }
@@ -472,7 +496,10 @@
     </div>
   </div>
 
-  <button id="mode-toggle" onclick="toggleListeningMode()">SAIRA MODE</button>
+  <div class="btn-row">
+    <button id="mode-toggle" onclick="toggleListeningMode()">SAIRA MODE</button>
+    <button id="stop-btn" onclick="sendStop()">■ STOP</button>
+  </div>
   <div id="mic-status">INITIALIZING MIC…</div>
   <div id="audio-level-wrap" style="display:none">
     <span id="audio-level-label">MIC</span>
@@ -685,6 +712,30 @@ function initMediaSource() {
   if (player.src) URL.revokeObjectURL(player.src);
 }
 
+// Kill playback immediately and drop anything still buffered.
+function killAudio() {
+  clearTimeout(audioPlayTimer);
+  audioChunks = [];
+  try {
+    player.pause();
+    player.currentTime = 0;
+  } catch (e) {}
+  if (player.src) { URL.revokeObjectURL(player.src); player.removeAttribute('src'); player.load(); }
+}
+
+function sendStop() {
+  killAudio();
+  responseEl.classList.remove('streaming');
+  boxResponse.classList.remove('active');
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({type: 'stop'}));
+  addLog('Stopped by user', 'tool');
+}
+
+// Spacebar / Escape also stop her
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' || e.code === 'Escape') { e.preventDefault(); sendStop(); }
+});
+
 // ── Mic ───────────────────────────────────────────────────────────────────────
 const transcriptEl  = document.getElementById('transcript');
 const responseEl    = document.getElementById('response');
@@ -767,7 +818,14 @@ function connect() {
     if (event.data instanceof ArrayBuffer) { appendAudio(event.data); return; }
     const msg = JSON.parse(event.data);
 
-    if (msg.type === 'status') {
+    if (msg.type === 'stop_audio') {
+      killAudio();
+      responseEl.classList.remove('streaming');
+      boxResponse.classList.remove('active');
+      addLog('Response interrupted', 'tool');
+      return;
+
+    } else if (msg.type === 'status') {
       setState(msg.state);
       if (msg.state === 'thinking') {
         queryCount++;

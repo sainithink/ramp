@@ -37,6 +37,16 @@ MIN_SPEECH_FRAMES     = 2     # must hear speech before silence counts
 WAKE_CHECK_CHUNKS = 15        # check every 15 × 100ms = 1.5s
 WAKE_WINDOW_SIZE  = 40        # 4s rolling window
 
+# Barge-in: catch "stop" while Saira is thinking or speaking. Checked more
+# often than the wake word, over a shorter window, so it feels responsive.
+BARGE_CHECK_CHUNKS = 8        # check every 8 × 100ms = 0.8s
+BARGE_WINDOW_SIZE  = 20       # 2s rolling window
+
+_STOP_WORDS = (
+    "stop", "shut up", "be quiet", "quiet", "enough", "cancel",
+    "nevermind", "never mind", "shutup", "ఆపు", "ఆపండి", "చాలు",
+)
+
 
 def _log_exchange(user_text: str, saira_text: str) -> None:
     try:
@@ -75,6 +85,20 @@ def _contains_saira(text: str) -> bool:
 
 def _strip_wake_word(text: str) -> str:
     return re.sub(r"^(hey\s+)?saira[,!.]*\s*", "", text, flags=re.IGNORECASE).strip()
+
+
+def _is_stop_command(text: str) -> bool:
+    """True when a barge-in utterance is telling Saira to stop talking.
+
+    Whisper hallucinates filler on near-silence, so require a short utterance
+    that is mostly the stop word rather than a substring match anywhere.
+    """
+    # Strip ASCII punctuation only — [^\w\s] would eat Telugu combining vowel
+    # marks, which are category Mn and so not matched by \w.
+    cleaned = re.sub(r"""[!-/:-@\[-`{-~]""", "", _strip_wake_word(text).lower()).strip()
+    if not cleaned or len(cleaned.split()) > 4:
+        return False
+    return any(w in cleaned for w in _STOP_WORDS)
 
 
 @asynccontextmanager
@@ -119,6 +143,7 @@ async def voice_endpoint(ws: WebSocket):
 
     mode           = "wake"   # wake | command | processing
     listening_mode = "saira"  # saira | always_on
+    response_task  = None     # in-flight run_response, so it can be cancelled
 
     # Command-mode state (shared between receive loop and run_response)
     webm_header    = None
@@ -145,6 +170,27 @@ async def voice_endpoint(ws: WebSocket):
     async def on_tool_call(name: str):
         await send_json({"type": "tool_call", "name": name})
 
+    async def stop_response(reason: str = "user"):
+        """Cancel any in-flight response and tell the client to drop its audio."""
+        nonlocal mode, response_task
+        if response_task and not response_task.done():
+            response_task.cancel()
+            log.info(">>> Response cancelled (%s)", reason)
+        # Drain queued TTS audio the client hasn't played yet
+        while not session.audio_out_queue.empty():
+            try:
+                session.audio_out_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        await send_json({"type": "stop_audio"})
+        if listening_mode == "always_on":
+            _reset_command_state()
+            mode = "command"
+            await send_json({"type": "status", "state": "always_on"})
+        else:
+            mode = "wake"
+            await send_json({"type": "status", "state": "wake"})
+
     async def run_response(text: str):
         nonlocal mode
         log.info(">>> Running response for: '%s'", text)
@@ -163,22 +209,26 @@ async def voice_endpoint(ws: WebSocket):
             full_reply = "".join(resp_chunks)
             _log_exchange(text, full_reply)
             await asyncio.to_thread(save_exchange, text, full_reply)
+        except asyncio.CancelledError:
+            # stop_response() already reset mode and notified the client
+            log.info(">>> run_response cancelled mid-flight")
+            return
         except Exception as exc:
             log.exception("Pipeline error: %s", exc)
             await send_json({"type": "status", "state": "error"})
-        finally:
-            if listening_mode == "always_on":
-                _reset_command_state()
-                mode = "command"
-                await send_json({"type": "status", "state": "always_on"})
-                log.info(">>> Always-on: back to continuous listening")
-            else:
-                mode = "wake"
-                await send_json({"type": "status", "state": "wake"})
-                log.info(">>> Back to wake mode")
+
+        if listening_mode == "always_on":
+            _reset_command_state()
+            mode = "command"
+            await send_json({"type": "status", "state": "always_on"})
+            log.info(">>> Always-on: back to continuous listening")
+        else:
+            mode = "wake"
+            await send_json({"type": "status", "state": "wake"})
+            log.info(">>> Back to wake mode")
 
     async def transcribe_command(raw_chunks: list[bytes], header: bytes) -> None:
-        nonlocal mode
+        nonlocal mode, response_task
         webm = b"".join([header] + raw_chunks)
         pcm = await asyncio.to_thread(_webm_to_pcm16k, webm)
         if pcm.size == 0:
@@ -204,14 +254,16 @@ async def voice_endpoint(ws: WebSocket):
                 mode = "wake"
                 await send_json({"type": "status", "state": "wake"})
             return
-        asyncio.create_task(run_response(text))
+        response_task = asyncio.create_task(run_response(text))
 
     async def receive_audio_task():
-        nonlocal mode, webm_header, listening_mode
+        nonlocal mode, webm_header, listening_mode, response_task
         nonlocal command_raw, cmd_raw_chunks, cmd_processed, silence_frames, speech_frames
 
         wake_window      = []       # last WAKE_WINDOW_SIZE raw chunks
         wake_check_count = 0
+        barge_window     = []       # rolling window used to catch "stop" while speaking
+        barge_check_count = 0
 
         await send_json({"type": "status", "state": "wake"})
 
@@ -226,7 +278,11 @@ async def voice_endpoint(ws: WebSocket):
                 if text_msg:
                     try:
                         ctrl = json.loads(text_msg)
-                        if ctrl.get("type") == "set_listening_mode":
+                        if ctrl.get("type") == "stop":
+                            await stop_response("client")
+                            wake_window = []
+                            wake_check_count = 0
+                        elif ctrl.get("type") == "set_listening_mode":
                             new_mode = ctrl.get("mode", "saira")
                             listening_mode = new_mode
                             log.info(">>> Listening mode changed to: %s", listening_mode)
@@ -255,8 +311,24 @@ async def voice_endpoint(ws: WebSocket):
                     cmd_raw_chunks = [webm_header]
                     continue
 
-                # ── PROCESSING: ignore incoming audio ──────────────────
+                # ── PROCESSING: listen only for a barge-in "stop" ──────
                 if mode == "processing":
+                    barge_window.append(chunk)
+                    if len(barge_window) > BARGE_WINDOW_SIZE:
+                        barge_window.pop(0)
+                    barge_check_count += 1
+                    if barge_check_count >= BARGE_CHECK_CHUNKS:
+                        barge_check_count = 0
+                        buf = b"".join([webm_header] + barge_window)
+                        pcm = await asyncio.to_thread(_webm_to_pcm16k, buf)
+                        if pcm.size > 0:
+                            heard = await asyncio.to_thread(_transcribe_pcm, pcm, False, "en")
+                            if heard and _is_stop_command(heard):
+                                log.info(">>> Barge-in stop heard: '%s'", heard)
+                                barge_window = []
+                                await stop_response("voice")
+                                wake_window = []
+                                wake_check_count = 0
                     continue
 
                 # ── WAKE mode: rolling window + periodic keyword check ─
@@ -283,7 +355,7 @@ async def voice_endpoint(ws: WebSocket):
                                     wake_window = []
                                     wake_check_count = 0
                                     await send_json({"type": "status", "state": "thinking"})
-                                    asyncio.create_task(run_response(command))
+                                    response_task = asyncio.create_task(run_response(command))
                                 else:
                                     # Just "Hey Saira" — wait for command
                                     log.info(">>> Wake word only — entering command mode")
