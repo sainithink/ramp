@@ -80,12 +80,26 @@ def _webm_to_pcm16k(webm_bytes: bytes) -> np.ndarray:
         return np.array([], dtype=np.int16)
 
 
+# Whisper never actually writes "Saira". Feeding it TTS of "Hey Saira" across
+# four voices and three speeds produced "sarah" 33 times out of 36 — so matching
+# the literal spelling meant the wake word could never fire. These are the
+# homophones it does emit, plus close spellings of the same sound.
+_WAKE_VARIANTS = (
+    "saira", "sairah", "sarah", "sara", "sayra", "seira", "syra", "sarai",
+)
+_WAKE_RE = re.compile(r"\b(?:%s)\b" % "|".join(_WAKE_VARIANTS), re.IGNORECASE)
+_WAKE_PREFIX_RE = re.compile(
+    r"^(?:hey|hi|hello|ok|okay)?[\s,]*(?:%s)[,!.\s]*" % "|".join(_WAKE_VARIANTS),
+    re.IGNORECASE,
+)
+
+
 def _contains_saira(text: str) -> bool:
-    return "saira" in text.lower()
+    return bool(_WAKE_RE.search(text))
 
 
 def _strip_wake_word(text: str) -> str:
-    return re.sub(r"^(hey\s+)?saira[,!.]*\s*", "", text, flags=re.IGNORECASE).strip()
+    return _WAKE_PREFIX_RE.sub("", text).strip()
 
 
 def _is_stop_command(text: str) -> bool:
