@@ -978,6 +978,9 @@ function connect() {
       responseEl.textContent += msg.text;
       boxResponse.scrollTop = boxResponse.scrollHeight;
 
+    } else if (msg.type === 'preference') {
+      addLog(`Learned: ${msg.text}`, 'tool');
+
     } else if (msg.type === 'tool_call') {
       toolCount++;
       document.getElementById('stat-tools').textContent = toolCount;

@@ -10,6 +10,7 @@ import httpx
 from core.profile import get_profile_text
 from core.dpo_examples import get_few_shot_examples
 from core.memory import get_relevant_context
+from core.preferences import get_preferences_text
 from tools import TOOL_DEFINITIONS, dispatch
 
 log = logging.getLogger(__name__)
@@ -135,6 +136,11 @@ def _build_system_prompt(user_query: str = "") -> str:
     profile = get_profile_text()
     if profile:
         parts.append(profile)
+    # Standing instructions go in unconditionally — unlike memory, they are not
+    # retrieved by similarity, because they must hold for every single reply.
+    prefs = get_preferences_text()
+    if prefs:
+        parts.append(prefs)
     if user_query:
         memory = get_relevant_context(user_query)
         if memory:
@@ -142,6 +148,9 @@ def _build_system_prompt(user_query: str = "") -> str:
         few_shot = get_few_shot_examples(user_query)
         if few_shot:
             parts.append(few_shot)
+    # Repeated last so the rules are the freshest thing before the user's turn.
+    if prefs:
+        parts.append(prefs)
     return "\n\n".join(parts)
 
 

@@ -3,6 +3,8 @@
 profile.enc
 .memory.key
 memory.enc
+.prefs.key
+preferences.enc
 google_token.json
 *.log
 *.onnx

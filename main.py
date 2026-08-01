@@ -19,6 +19,7 @@ from core.ollama_client import get_response, warmup_llm
 from core.kokoro_client import synthesize_stream, get_kokoro
 from core.profile import load_profile
 from core.memory import init as init_memory, save_exchange
+from core.preferences import init as init_prefs, learn as learn_prefs
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
 log = logging.getLogger(__name__)
@@ -109,6 +110,7 @@ async def lifespan(app: FastAPI):
         asyncio.to_thread(get_model),
         asyncio.to_thread(get_kokoro),
         asyncio.to_thread(init_memory),
+        asyncio.to_thread(init_prefs),
         warmup_llm(),
     )
     log.info("Saira ready.")
@@ -196,6 +198,10 @@ async def voice_endpoint(ws: WebSocket):
         log.info(">>> Running response for: '%s'", text)
         await send_json({"type": "transcript", "text": text})
         await send_json({"type": "status", "state": "thinking"})
+        # Learn standing instructions before generating, so "call me Sai"
+        # applies to this very reply and not just later ones.
+        for rule in await asyncio.to_thread(learn_prefs, text):
+            await send_json({"type": "preference", "text": rule})
         try:
             resp_chunks = []
 

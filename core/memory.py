@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -105,6 +106,24 @@ def _get_model():
     except Exception as exc:
         log.warning("sentence-transformers unavailable for memory: %s", exc)
     return _st_model
+
+
+_TELUGU_RE = re.compile(r"[ఀ-౿]")
+
+
+def _is_telugu(text: str) -> bool:
+    return bool(_TELUGU_RE.search(text or ""))
+
+
+def _script_matches(query: str, reply: str) -> bool:
+    """True when a past reply is in the same script as the current question.
+
+    Telling the model not to copy the wording is not enough — it still answers
+    an English question in Telugu when a Telugu reply is sitting in context.
+    So mismatched-script replies are withheld entirely. No facts are lost:
+    name and location also live in the profile.
+    """
+    return _is_telugu(query) == _is_telugu(reply)
 
 
 def _cosine_sim(query_vec: np.ndarray, matrix: np.ndarray) -> np.ndarray:
@@ -246,12 +265,22 @@ def get_relevant_context(query: str, top_k: int = TOP_K) -> str:
             (exchanges[i], float(sims[i]))
             for i in top_idx
             if float(sims[i]) >= SIM_FLOOR
+            and _script_matches(query, exchanges[i].get("assistant", ""))
         ]
 
         if not chosen:
             return ""
 
-        lines = ["Here are relevant things from your past conversations with the user:"]
+        # Framed as background, not as a template. Without this the model
+        # copies an old reply wholesale — answering an English question in
+        # Telugu, or using a form of address the user has since changed.
+        lines = [
+            "Background from past conversations with the user. Use these only "
+            "to recall FACTS. Do NOT copy the wording, the language, or the "
+            "form of address — those replies may be outdated. Answer in the "
+            "language of the user's current message and follow the standing "
+            "instructions above.",
+        ]
         for ex, _ in chosen:
             lines.append(f'[{ex["ts"]}] User: "{ex["user"][:120]}"')
             lines.append(f'You replied: "{ex["assistant"][:200]}"')
