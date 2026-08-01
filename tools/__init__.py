@@ -52,7 +52,8 @@ TOOL_DEFINITIONS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Song name, artist, or video to search and play on YouTube."}
+                "query": {"type": "string", "description": "Song name, artist, or video to search and play on YouTube."},
+                "browser": {"type": "string", "description": "Optional browser to play it in: firefox, chrome, safari, brave, edge, opera. Omit for the default browser."},
             },
             "required": ["query"],
         },

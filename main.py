@@ -322,7 +322,7 @@ async def voice_endpoint(ws: WebSocket):
                         buf = b"".join([webm_header] + barge_window)
                         pcm = await asyncio.to_thread(_webm_to_pcm16k, buf)
                         if pcm.size > 0:
-                            heard = await asyncio.to_thread(_transcribe_pcm, pcm, False, "en")
+                            heard = await asyncio.to_thread(_transcribe_pcm, pcm, False, "en", True)
                             if heard and _is_stop_command(heard):
                                 log.info(">>> Barge-in stop heard: '%s'", heard)
                                 barge_window = []
@@ -344,7 +344,7 @@ async def voice_endpoint(ws: WebSocket):
                         pcm = await asyncio.to_thread(_webm_to_pcm16k, buf)
                         if pcm.size > 0:
                             # English-locked, no VAD — finds "saira" reliably
-                            text = await asyncio.to_thread(_transcribe_pcm, pcm, False, "en")
+                            text = await asyncio.to_thread(_transcribe_pcm, pcm, False, "en", True)
                             log.info("Wake window: '%s'", text)
                             if text and _contains_saira(text):
                                 command = _strip_wake_word(text).strip()

@@ -8,7 +8,6 @@ from __future__ import annotations
 import io
 import logging
 import os
-import tempfile
 
 import av
 import numpy as np
@@ -16,25 +15,41 @@ from faster_whisper import WhisperModel
 
 log = logging.getLogger(__name__)
 
-MODEL_SIZE = os.environ.get("WHISPER_MODEL", "small.en")
+# Two models, because the two jobs have very different requirements.
+# The wake check re-runs every ~1.5s forever and only has to spot one word, so
+# it gets the fastest model. Commands run once per turn and need accuracy.
+# Measured on this machine for 3s of audio: tiny.en 0.24s, base.en 0.52s,
+# small.en 2.0s — small.en took longer than the wake interval itself.
+MODEL_SIZE      = os.environ.get("WHISPER_MODEL", "base.en")
+WAKE_MODEL_SIZE = os.environ.get("WHISPER_WAKE_MODEL", "tiny.en")
 
 
-def _load_model() -> WhisperModel:
-    log.info("Loading Whisper model '%s' (first run downloads ~150 MB)…", MODEL_SIZE)
-    model = WhisperModel(MODEL_SIZE, device="cpu", compute_type="int8")
-    log.info("Whisper model ready.")
+def _load_model(size: str) -> WhisperModel:
+    log.info("Loading Whisper model '%s'…", size)
+    model = WhisperModel(size, device="cpu", compute_type="int8")
+    log.info("Whisper model '%s' ready.", size)
     return model
 
 
-# Load once at import time so the model is warm before the first request.
 _model: Optional[WhisperModel] = None
+_wake_model: Optional[WhisperModel] = None
 
 
 def get_model() -> WhisperModel:
-    global _model
+    """Accurate model, used for actual commands."""
+    global _model, _wake_model
     if _model is None:
-        _model = _load_model()
+        _model = _load_model(MODEL_SIZE)
+    if _wake_model is None:
+        _wake_model = _model if WAKE_MODEL_SIZE == MODEL_SIZE else _load_model(WAKE_MODEL_SIZE)
     return _model
+
+
+def get_wake_model() -> WhisperModel:
+    """Fast model, used for the constantly-running wake/barge-in checks."""
+    if _wake_model is None:
+        get_model()
+    return _wake_model
 
 
 def _decode_webm_to_pcm(webm_bytes: bytes) -> np.ndarray:
@@ -57,42 +72,39 @@ def _decode_webm_to_pcm(webm_bytes: bytes) -> np.ndarray:
     return np.concatenate(samples)
 
 
-def _pcm_to_wav(pcm: np.ndarray) -> str:
-    """Write float32 or int16 PCM → temp WAV file, return path."""
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-        wav_path = f.name
-    container = av.open(wav_path, mode="w")
-    stream = container.add_stream("pcm_s16le", rate=16000)
-    stream.layout = "mono"
+def _as_float32(pcm: np.ndarray) -> np.ndarray:
+    """Normalise int16 or float32 PCM to the float32 array faster-whisper wants."""
     if pcm.dtype == np.float32:
-        pcm = (pcm * 32767).clip(-32768, 32767).astype(np.int16)
-    frame = av.AudioFrame.from_ndarray(pcm.reshape(1, -1), format="s16", layout="mono")
-    frame.sample_rate = 16000
-    for packet in stream.encode(frame):
-        container.mux(packet)
-    for packet in stream.encode(None):
-        container.mux(packet)
-    container.close()
-    return wav_path
+        return pcm
+    return pcm.astype(np.float32) / 32768.0
 
 
-def _transcribe_pcm(pcm: np.ndarray, vad: bool = True, language: str | None = None) -> str:
+def _transcribe_pcm(
+    pcm: np.ndarray,
+    vad: bool = True,
+    language: str | None = None,
+    fast: bool = False,
+) -> str:
+    """Transcribe 16 kHz mono PCM.
+
+    `fast=True` uses the small wake model and greedy decoding — for the wake
+    word and barge-in checks, which run constantly and only look for one word.
+    """
     if pcm.size == 0:
         return ""
-    wav_path = _pcm_to_wav(pcm)
-    try:
-        model = get_model()
-        kwargs: dict = {"beam_size": 5, "task": "transcribe"}
-        if language:
-            kwargs["language"] = language
-        if vad:
-            kwargs["vad_filter"] = True
-            kwargs["vad_parameters"] = {"threshold": 0.5, "min_silence_duration_ms": 500}
-        segments, _ = model.transcribe(wav_path, **kwargs)
-        text = " ".join(s.text for s in segments).strip()
-        log.info("Whisper transcript: '%s'", text)
-        return text
-    finally:
-        os.unlink(wav_path)
+    # faster-whisper accepts a float32 array directly; the old code wrote a
+    # temp WAV and read it back on every single call.
+    audio = _as_float32(pcm)
+    model = get_wake_model() if fast else get_model()
+    kwargs: dict = {"beam_size": 1 if fast else 5, "task": "transcribe"}
+    if language:
+        kwargs["language"] = language
+    if vad:
+        kwargs["vad_filter"] = True
+        kwargs["vad_parameters"] = {"threshold": 0.5, "min_silence_duration_ms": 500}
+    segments, _ = model.transcribe(audio, **kwargs)
+    text = " ".join(s.text for s in segments).strip()
+    log.info("Whisper transcript%s: '%s'", " (fast)" if fast else "", text)
+    return text
 
 
