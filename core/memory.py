@@ -65,6 +65,25 @@ def _load_from_disk() -> list[dict]:
         return []
 
 
+def _key(e: dict) -> tuple:
+    return (e.get("ts", ""), e.get("user", ""), e.get("assistant", ""))
+
+
+def _merge_with_disk(exchanges: list[dict]) -> list[dict]:
+    """Union our in-RAM list with whatever is on disk now.
+
+    A plain overwrite loses data whenever a second process is running — an
+    import script, or another server instance — because each one holds the
+    whole list in memory and writes its own stale snapshot over the file.
+    """
+    on_disk = _load_from_disk()
+    if not on_disk:
+        return exchanges
+    merged = {_key(e): e for e in on_disk}
+    merged.update({_key(e): e for e in exchanges})
+    return sorted(merged.values(), key=lambda e: e.get("ts", ""))
+
+
 def _save_to_disk(exchanges: list[dict]) -> None:
     try:
         raw = json.dumps(exchanges, ensure_ascii=False).encode()
@@ -104,12 +123,70 @@ def init() -> None:
         _embeddings = None
         _embedded_count = 0
         log.info("Memory: loaded %d past exchanges", len(_exchanges))
+    purge_bad_exchanges()  # drop refusals stored before the filter existed
     _get_model()  # warm the encoder so the first query isn't slow
+
+
+# Replies that should never be remembered. Retrieval feeds past answers back as
+# "You replied: …", so storing a refusal or an error teaches Saira to repeat it.
+_BAD_REPLY_MARKERS = (
+    "i dont have that capability",
+    "i dont have that information",
+    "i dont have access",
+    "i dont have personal",
+    "i cant do that",
+    "i cant help",
+    "im unable",
+    "i am unable",
+    "unable to provide",
+    "as an ai",
+    "i dont have the ability",
+)
+
+
+def _normalise(text: str) -> str:
+    """Lowercase and flatten contractions so one marker matches every spelling
+    of it — "don't", "dont" and "do not" all become "dont"."""
+    t = text.lower().replace("'", "").replace("’", "")
+    for long, short in (("do not", "dont"), ("cannot", "cant"),
+                        ("can not", "cant"), ("i am", "im")):
+        t = t.replace(long, short)
+    return t
+
+
+def is_worth_remembering(user: str, assistant: str) -> bool:
+    """False for exchanges that would poison future retrieval."""
+    u, a = (user or "").strip(), (assistant or "").strip()
+    if not u or not a or len(a) < 3:
+        return False
+    norm = _normalise(a)
+    return not any(marker in norm for marker in _BAD_REPLY_MARKERS)
+
+
+def purge_bad_exchanges() -> int:
+    """Drop already-stored refusals/errors. Returns how many were removed."""
+    global _exchanges, _embeddings, _embedded_count
+    with _lock:
+        before = len(_exchanges)
+        _exchanges = [
+            e for e in _exchanges
+            if is_worth_remembering(e.get("user", ""), e.get("assistant", ""))
+        ]
+        removed = before - len(_exchanges)
+        if removed:
+            _embeddings = None      # matrix no longer lines up with the list
+            _embedded_count = 0
+            _save_to_disk(_exchanges)
+            log.info("Memory: purged %d unusable exchanges", removed)
+    return removed
 
 
 def save_exchange(user: str, assistant: str) -> None:
     """Append a new exchange and persist encrypted to disk."""
     global _exchanges, _embeddings, _embedded_count
+    if not is_worth_remembering(user, assistant):
+        log.info("Memory: skipping unusable exchange (%r)", (assistant or "")[:60])
+        return
     entry = {
         "ts": datetime.now().isoformat(timespec="seconds"),
         "user": user,
@@ -117,11 +194,15 @@ def save_exchange(user: str, assistant: str) -> None:
     }
     with _lock:
         _exchanges.append(entry)
-        # trim oldest if over limit — invalidates the embedding cache
-        if len(_exchanges) > MAX_STORED:
-            _exchanges = _exchanges[-MAX_STORED:]
+        merged = _merge_with_disk(_exchanges)
+        if len(merged) > MAX_STORED:
+            merged = merged[-MAX_STORED:]
+        # Anything another process added shifts our indices, so the cached
+        # embedding matrix no longer lines up with the list.
+        if len(merged) != len(_exchanges):
             _embeddings = None
             _embedded_count = 0
+        _exchanges = merged
         _save_to_disk(_exchanges)
 
 
