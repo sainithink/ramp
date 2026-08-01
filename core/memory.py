@@ -33,7 +33,7 @@ _lock = threading.Lock()
 _exchanges: list[dict] = []          # [{ts, user, assistant}, ...]
 _embeddings: Optional[np.ndarray] = None
 _st_model = None
-_dirty = False                        # embeddings need rebuild
+_embedded_count = 0                   # how many exchanges are already embedded
 
 
 # ── Key management ───────────────────────────────────────────────────────────
@@ -88,14 +88,6 @@ def _get_model():
     return _st_model
 
 
-def _build_embeddings(exchanges: list[dict]) -> Optional[np.ndarray]:
-    model = _get_model()
-    if model is None or not exchanges:
-        return None
-    texts = [e["user"] for e in exchanges]
-    return model.encode(texts, convert_to_numpy=True).astype(np.float32)
-
-
 def _cosine_sim(query_vec: np.ndarray, matrix: np.ndarray) -> np.ndarray:
     q = query_vec / (np.linalg.norm(query_vec) + 1e-9)
     m = matrix / (np.linalg.norm(matrix, axis=1, keepdims=True) + 1e-9)
@@ -106,16 +98,18 @@ def _cosine_sim(query_vec: np.ndarray, matrix: np.ndarray) -> np.ndarray:
 
 def init() -> None:
     """Load memory from disk at startup."""
-    global _exchanges, _embeddings, _dirty
+    global _exchanges, _embeddings, _embedded_count
     with _lock:
         _exchanges = _load_from_disk()
-        _dirty = True
+        _embeddings = None
+        _embedded_count = 0
         log.info("Memory: loaded %d past exchanges", len(_exchanges))
+    _get_model()  # warm the encoder so the first query isn't slow
 
 
 def save_exchange(user: str, assistant: str) -> None:
     """Append a new exchange and persist encrypted to disk."""
-    global _exchanges, _dirty
+    global _exchanges, _embeddings, _embedded_count
     entry = {
         "ts": datetime.now().isoformat(timespec="seconds"),
         "user": user,
@@ -123,16 +117,17 @@ def save_exchange(user: str, assistant: str) -> None:
     }
     with _lock:
         _exchanges.append(entry)
-        # trim oldest if over limit
+        # trim oldest if over limit — invalidates the embedding cache
         if len(_exchanges) > MAX_STORED:
             _exchanges = _exchanges[-MAX_STORED:]
+            _embeddings = None
+            _embedded_count = 0
         _save_to_disk(_exchanges)
-        _dirty = True
 
 
 def get_relevant_context(query: str, top_k: int = TOP_K) -> str:
     """Return a formatted block of the most relevant past exchanges."""
-    global _embeddings, _dirty
+    global _embeddings, _embedded_count
 
     with _lock:
         exchanges = list(_exchanges)
@@ -150,11 +145,13 @@ def get_relevant_context(query: str, top_k: int = TOP_K) -> str:
             lines.append(f'You replied: "{e["assistant"]}"')
         return "\n".join(lines)
 
-    # Rebuild embeddings if new exchanges added
+    # Encode only exchanges added since the last call, then append to the matrix
     with _lock:
-        if _dirty or _embeddings is None or len(_embeddings) != len(exchanges):
-            _embeddings = _build_embeddings(exchanges)
-            _dirty = False
+        if _embedded_count < len(exchanges):
+            new_texts = [e["user"] for e in exchanges[_embedded_count:]]
+            new_vecs = model.encode(new_texts, convert_to_numpy=True).astype(np.float32)
+            _embeddings = new_vecs if _embeddings is None else np.vstack([_embeddings, new_vecs])
+            _embedded_count = len(exchanges)
 
     if _embeddings is None or _embeddings.shape[0] == 0:
         return ""

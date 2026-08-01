@@ -97,6 +97,22 @@ def _tools_for_query(query: str) -> list:
     ]
 
 
+async def warmup_llm() -> None:
+    """Load the model into Ollama's memory so the first real query is fast."""
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            await client.post(OLLAMA_URL, json={
+                "model": MODEL,
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": False,
+                "options": {"num_predict": 1},
+                "keep_alive": "30m",
+            })
+        log.info("Ollama warmed up (%s)", MODEL)
+    except Exception as exc:
+        log.warning("Ollama warmup failed: %s", exc)
+
+
 def _build_system_prompt(user_query: str = "") -> str:
     parts = [_BASE_PROMPT]
     profile = get_profile_text()
@@ -123,15 +139,48 @@ async def get_response(
     messages.append({"role": "user", "content": transcript})
 
     full_response = []
+    tools = _tools_for_query(transcript)
+    options = {"num_predict": 150, "temperature": 0.7}
 
     async with httpx.AsyncClient(timeout=120) as client:
-        # Allow up to 3 tool call rounds
+        # Fast path: no tools needed — stream tokens so TTS starts immediately
+        if not tools:
+            payload = {
+                "model": MODEL,
+                "messages": messages,
+                "stream": True,
+                "options": options,
+                "keep_alive": "30m",
+            }
+            async with client.stream("POST", OLLAMA_URL, json=payload) as streamed:
+                async for line in streamed.aiter_lines():
+                    if not line:
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    delta = chunk.get("message", {}).get("content", "")
+                    if delta:
+                        full_response.append(delta)
+                        yield delta
+                    if chunk.get("done"):
+                        break
+            full_text = "".join(full_response)
+            session.append_history("user", transcript)
+            session.append_history("assistant", full_text)
+            log.info("Ollama response (streamed): '%s'", full_text[:120])
+            return
+
+        # Tool path: non-streaming rounds for tool support
         for _ in range(3):
             payload = {
                 "model": MODEL,
                 "messages": messages,
-                "tools": _tools_for_query(transcript),
-                "stream": False,  # non-streaming for tool support
+                "tools": tools,
+                "stream": False,
+                "options": options,
+                "keep_alive": "30m",
             }
 
             resp = await client.post(OLLAMA_URL, json=payload)

@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 
 from core.session import VoiceSession
 from core.whisper_client import get_model, _transcribe_pcm
-from core.ollama_client import get_response
+from core.ollama_client import get_response, warmup_llm
 from core.kokoro_client import synthesize_stream, get_kokoro
 from core.profile import load_profile
 from core.memory import init as init_memory, save_exchange
@@ -26,13 +26,15 @@ log = logging.getLogger(__name__)
 NOTEPAD_PATH = "./conversation_log.md"
 SAMPLE_RATE  = 16000
 
-# Silence detection via PCM RMS
-SILENCE_THRESHOLD    = 0.02   # RMS below this = silence (raised to ignore background TV)
-SILENCE_FRAMES_NEEDED = 15    # 15 × ~100ms = ~1.5s of silence to stop
-MIN_SPEECH_FRAMES    = 4      # must hear speech before silence counts
+# Silence detection via PCM RMS. Frame counts are in RMS_DECODE_EVERY-chunk
+# units (~300ms each), not raw 100ms chunks.
+SILENCE_THRESHOLD     = 0.02  # RMS below this = silence (ignores background TV)
+RMS_DECODE_EVERY      = 3     # decode every 3rd chunk — full re-decode is O(N²)
+SILENCE_FRAMES_NEEDED = 3     # 3 × ~300ms = ~0.9s of silence to stop
+MIN_SPEECH_FRAMES     = 2     # must hear speech before silence counts
 
 # Wake-word detection
-WAKE_CHECK_CHUNKS = 20        # check every 20 × 100ms = 2s
+WAKE_CHECK_CHUNKS = 15        # check every 15 × 100ms = 1.5s
 WAKE_WINDOW_SIZE  = 40        # 4s rolling window
 
 
@@ -83,6 +85,7 @@ async def lifespan(app: FastAPI):
         asyncio.to_thread(get_model),
         asyncio.to_thread(get_kokoro),
         asyncio.to_thread(init_memory),
+        warmup_llm(),
     )
     log.info("Saira ready.")
     yield
@@ -122,16 +125,14 @@ async def voice_endpoint(ws: WebSocket):
     command_raw    = []
     cmd_raw_chunks = []
     cmd_processed  = 0
-    cmd_pcm_buf    = []
     silence_frames = 0
     speech_frames  = 0
 
     def _reset_command_state():
-        nonlocal command_raw, cmd_raw_chunks, cmd_processed, cmd_pcm_buf, silence_frames, speech_frames
+        nonlocal command_raw, cmd_raw_chunks, cmd_processed, silence_frames, speech_frames
         command_raw    = []
         cmd_raw_chunks = [webm_header] if webm_header else []
         cmd_processed  = 0
-        cmd_pcm_buf    = []
         silence_frames = 0
         speech_frames  = 0
 
@@ -207,7 +208,7 @@ async def voice_endpoint(ws: WebSocket):
 
     async def receive_audio_task():
         nonlocal mode, webm_header, listening_mode
-        nonlocal command_raw, cmd_raw_chunks, cmd_processed, cmd_pcm_buf, silence_frames, speech_frames
+        nonlocal command_raw, cmd_raw_chunks, cmd_processed, silence_frames, speech_frames
 
         wake_window      = []       # last WAKE_WINDOW_SIZE raw chunks
         wake_check_count = 0
@@ -297,12 +298,15 @@ async def voice_endpoint(ws: WebSocket):
                     command_raw.append(chunk)
                     cmd_raw_chunks.append(chunk)
 
-                    # Incremental decode for RMS
+                    # Decode only every Nth chunk — a full re-decode of the
+                    # accumulated buffer is O(N²) if done on every 100ms chunk.
+                    if len(cmd_raw_chunks) % RMS_DECODE_EVERY:
+                        continue
+
                     pcm = await asyncio.to_thread(_webm_to_pcm16k, b"".join(cmd_raw_chunks))
                     if pcm.size > cmd_processed:
                         new_pcm = pcm[cmd_processed:]
                         cmd_processed = pcm.size
-                        cmd_pcm_buf.append(new_pcm)
 
                         rms = float(np.sqrt(np.mean(new_pcm.astype(np.float32) ** 2))) / 32768.0
                         if rms >= SILENCE_THRESHOLD:
