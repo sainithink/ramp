@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import AsyncIterator, Callable, Awaitable, Optional
 
 import httpx
@@ -144,6 +145,65 @@ def _build_system_prompt(user_query: str = "") -> str:
     return "\n\n".join(parts)
 
 
+# llama3.2 sometimes emits a tool call as plain text in `content` instead of in
+# the structured `tool_calls` field. Left alone it gets spoken aloud — the user
+# heard '{"name":"open_website","parameters\":{\"url\":\"https://sainith.in\"}}'
+# read out instead of the site opening. Note the broken escaping in that real
+# sample: strict json.loads cannot recover it, so parse tolerantly.
+_TOOL_NAME_RE = re.compile(r'"?name\\?"?\s*:\s*\\?"([a-zA-Z_][a-zA-Z0-9_]*)', re.I)
+_KV_RE        = re.compile(r'\\?"([a-zA-Z_][a-zA-Z0-9_]*)\\?"\s*:\s*\\?"([^"\\]{1,400}?)\\?"')
+_FUNC_TAG_RE  = re.compile(r"<function=([a-zA-Z_][a-zA-Z0-9_]*)>(.*?)</function>", re.S)
+_LOOKS_LIKE_CALL_RE = re.compile(
+    r'(\{[^{}]*\\?"name\\?"\s*:|<function=|\\?"(parameters|arguments)\\?"\s*:)', re.I
+)
+
+
+def _extract_text_tool_call(content: str) -> tuple[str, dict] | None:
+    """Recover a tool call the model wrote into its text output.
+
+    Returns (name, args) only for a tool that actually exists, so ordinary
+    prose that happens to contain braces is never mistaken for a call.
+    """
+    if not content or not _LOOKS_LIKE_CALL_RE.search(content):
+        return None
+
+    valid = {t["name"] for t in TOOL_DEFINITIONS}
+
+    # <function=open_website>{"url": "..."}</function>
+    tag = _FUNC_TAG_RE.search(content)
+    if tag and tag.group(1) in valid:
+        name, body = tag.group(1), tag.group(2)
+    else:
+        m = _TOOL_NAME_RE.search(content)
+        if not m or m.group(1) not in valid:
+            return None
+        name, body = m.group(1), content[m.end():]
+
+    # Strict parse first; fall back to scraping key/value pairs when the model
+    # produced malformed JSON.
+    args: dict = {}
+    try:
+        blob = json.loads(content)
+        raw = blob.get("parameters") or blob.get("arguments") or {}
+        if isinstance(raw, dict):
+            args = raw
+    except Exception:
+        for k, v in _KV_RE.findall(body):
+            if k.lower() not in ("name", "parameters", "arguments"):
+                args[k] = v
+    return name, args
+
+
+def _strip_tool_syntax(content: str) -> str:
+    """Remove leftover call syntax so Saira never reads JSON aloud."""
+    cleaned = _FUNC_TAG_RE.sub("", content)
+    # Greedy: take everything from the first brace to the last, otherwise
+    # nested/malformed braces leave fragments behind.
+    cleaned = re.sub(r"\{.*\}", "", cleaned, flags=re.S)
+    cleaned = re.sub(r"[{}\[\]\\]", "", cleaned)      # stray unmatched brackets
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
+
+
 async def get_response(
     transcript: str,
     history: list,
@@ -160,6 +220,7 @@ async def get_response(
 
     async with httpx.AsyncClient(timeout=120) as client:
         # Fast path: no tools needed — stream tokens so TTS starts immediately
+        leaked = False
         if not tools:
             payload = {
                 "model": MODEL,
@@ -179,10 +240,22 @@ async def get_response(
                     delta = chunk.get("message", {}).get("content", "")
                     if delta:
                         full_response.append(delta)
-                        yield delta
+                        # A tool call can only be recognised once enough tokens
+                        # have arrived, so hold output back the moment the
+                        # reply starts looking like one.
+                        if not leaked and _LOOKS_LIKE_CALL_RE.search("".join(full_response)):
+                            leaked = True
+                        if not leaked:
+                            yield delta
                     if chunk.get("done"):
                         break
             full_text = "".join(full_response)
+            if leaked:
+                log.warning("Tool syntax leaked into streamed reply: %s", full_text[:120])
+                full_text = _strip_tool_syntax(full_text)
+                full_response = [full_text]
+                if full_text:
+                    yield full_text
             session.append_history("user", transcript)
             session.append_history("assistant", full_text)
             log.info("Ollama response (streamed): '%s'", full_text[:120])
@@ -205,6 +278,15 @@ async def get_response(
 
             msg = data.get("message", {})
             tool_calls = msg.get("tool_calls", [])
+
+            # Recover a call the model wrote as text rather than returning
+            # structurally, so it gets executed instead of spoken.
+            if not tool_calls:
+                recovered = _extract_text_tool_call(msg.get("content", ""))
+                if recovered:
+                    name, args = recovered
+                    log.info("Recovered text tool call: %s(%s)", name, args)
+                    tool_calls = [{"function": {"name": name, "arguments": args}}]
 
             if tool_calls:
                 # Execute each tool call
@@ -230,8 +312,13 @@ async def get_response(
                 # Loop: send tool results back to model
                 continue
 
-            # No tool calls — yield the already-received content directly
+            # No tool calls — yield the already-received content directly.
+            # Belt and braces: if unparseable call syntax survived, drop it
+            # rather than speak it.
             content = msg.get("content", "")
+            if _LOOKS_LIKE_CALL_RE.search(content):
+                log.warning("Stripping unparsed tool syntax from reply: %s", content[:120])
+                content = _strip_tool_syntax(content)
             if content:
                 full_response.append(content)
                 yield content
