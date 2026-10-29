@@ -22,3 +22,10 @@ venv/
 dist/
 build/
 .DS_Store
+
+# Multi-tenant: master key derives every user's encryption key.
+# Losing it makes all stored conversations unreadable; leaking it exposes them.
+.master.key
+saira.db
+saira.db-wal
+saira.db-shm

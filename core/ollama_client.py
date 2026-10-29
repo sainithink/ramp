@@ -7,10 +7,7 @@ import re
 from typing import AsyncIterator, Callable, Awaitable, Optional
 
 import httpx
-from core.profile import get_profile_text
 from core.dpo_examples import get_few_shot_examples
-from core.memory import get_relevant_context
-from core.preferences import get_preferences_text
 from tools import TOOL_DEFINITIONS, dispatch
 
 log = logging.getLogger(__name__)
@@ -131,18 +128,31 @@ async def warmup_llm() -> None:
         log.warning("Ollama warmup failed: %s", exc)
 
 
-def _build_system_prompt(user_query: str = "") -> str:
-    parts = [_BASE_PROMPT]
-    profile = get_profile_text()
+def _build_system_prompt(user_query: str = "", ctx=None) -> str:
+    """Assemble the prompt for one user.
+
+    `ctx` is a core.userdata.UserContext. Without it the assistant runs with no
+    personal context at all — used for warmup and for anonymous demo sessions.
+    Nothing falls back to global state, so one user's data can never leak into
+    another's prompt.
+    """
+    # The assistant answers to whatever this user named it.
+    wake = (getattr(ctx, "wake_name", None) or "Saira").strip()
+    parts = [_BASE_PROMPT.replace("You are Saira,", f"You are {wake},")]
+
+    if ctx is None:
+        return "\n\n".join(parts)
+
+    profile = ctx.profile.as_prompt()
     if profile:
         parts.append(profile)
     # Standing instructions go in unconditionally — unlike memory, they are not
     # retrieved by similarity, because they must hold for every single reply.
-    prefs = get_preferences_text()
+    prefs = ctx.preferences.as_prompt()
     if prefs:
         parts.append(prefs)
     if user_query:
-        memory = get_relevant_context(user_query)
+        memory = ctx.memory.get_relevant_context(user_query)
         if memory:
             parts.append(memory)
         few_shot = get_few_shot_examples(user_query)
@@ -218,8 +228,9 @@ async def get_response(
     history: list,
     session,
     on_tool_call: Optional[Callable[[str], Awaitable[None]]] = None,
+    ctx=None,
 ) -> AsyncIterator[str]:
-    messages = [{"role": "system", "content": _build_system_prompt(transcript)}]
+    messages = [{"role": "system", "content": _build_system_prompt(transcript, ctx)}]
     messages += list(history)
     messages.append({"role": "user", "content": transcript})
 

@@ -1,0 +1,148 @@
+/* Shared SAIRA theme — black + emerald, matching the assistant UI. */
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap');
+
+:root {
+  --g1: #00e676;
+  --g2: #00c853;
+  --g3: #1de9b6;
+  --g-glow: rgba(0,230,118,0.18);
+  --g-dim: rgba(0,230,118,0.45);
+  --g-faint: rgba(0,230,118,0.05);
+  --bg: #000;
+  --text: #a8ffcb;
+  --err: #ff5252;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Share Tech Mono', monospace;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  line-height: 1.6;
+}
+
+/* faint grid + scan line, same as the assistant screen */
+body::before {
+  content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background-image:
+    linear-gradient(rgba(0,230,118,.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,230,118,.03) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+.scan-line {
+  position: fixed; left: 0; right: 0; height: 2px; z-index: 0; pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(0,230,118,.10), transparent);
+  animation: scan 9s linear infinite;
+}
+@keyframes scan { 0%{top:-2px} 100%{top:100vh} }
+
+a { color: var(--g1); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.wrap { position: relative; z-index: 1; }
+
+/* ── nav ── */
+.nav {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 28px; border-bottom: 1px solid var(--g-glow);
+  background: rgba(0,0,0,.9); position: relative; z-index: 10;
+}
+.brand {
+  font-family: 'Orbitron', sans-serif; font-weight: 900;
+  letter-spacing: .35em; font-size: .95rem; color: var(--g1);
+  text-shadow: 0 0 18px var(--g2);
+}
+.brand span { color: rgba(255,255,255,.5); }
+.nav-right { display: flex; gap: 16px; align-items: center; font-size: .72rem; }
+
+/* ── panels / cards ── */
+.panel {
+  background: var(--g-faint); border: 1px solid var(--g-glow);
+  border-radius: 4px; padding: 26px; position: relative;
+}
+.panel::before, .panel::after {
+  content: ''; position: absolute; width: 8px; height: 8px;
+}
+.panel::before { top: 0; left: 0; border-top: 2px solid var(--g1); border-left: 2px solid var(--g1); }
+.panel::after { bottom: 0; right: 0; border-bottom: 2px solid var(--g1); border-right: 2px solid var(--g1); }
+
+/* ── forms ── */
+.field { margin-bottom: 16px; }
+label {
+  display: block; font-size: .62rem; letter-spacing: .16em;
+  text-transform: uppercase; color: var(--g-dim); margin-bottom: 6px;
+}
+input, select {
+  width: 100%; padding: 11px 13px;
+  background: rgba(0,230,118,.04); color: var(--text);
+  border: 1px solid var(--g-glow); border-radius: 3px;
+  font-family: 'Share Tech Mono', monospace; font-size: .85rem;
+  transition: border-color .2s, box-shadow .2s;
+}
+input:focus, select:focus {
+  outline: none; border-color: var(--g1);
+  box-shadow: 0 0 10px rgba(0,230,118,.18);
+}
+.hint { font-size: .62rem; color: var(--g-dim); margin-top: 5px; line-height: 1.5; }
+
+button, .btn {
+  font-family: 'Orbitron', sans-serif; font-size: .64rem;
+  letter-spacing: .15em; text-transform: uppercase;
+  padding: 11px 22px; cursor: pointer; border-radius: 3px;
+  border: 1px solid var(--g1); background: rgba(0,230,118,.08);
+  color: var(--g1); transition: all .2s;
+}
+button:hover:not(:disabled), .btn:hover {
+  background: rgba(0,230,118,.16); box-shadow: 0 0 14px rgba(0,230,118,.22);
+  text-decoration: none;
+}
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.ghost { border-color: var(--g-glow); background: transparent; color: var(--g-dim); }
+button.ghost:hover { border-color: var(--g1); color: var(--g1); }
+button.danger { border-color: rgba(255,82,82,.4); color: var(--err); background: rgba(255,82,82,.05); }
+button.danger:hover { border-color: var(--err); background: rgba(255,82,82,.12); box-shadow: 0 0 14px rgba(255,82,82,.2); }
+button.full { width: 100%; }
+
+/* ── messages ── */
+.msg { padding: 10px 13px; border-radius: 3px; font-size: .74rem; margin-bottom: 14px; display: none; }
+.msg.show { display: block; }
+.msg.error { border: 1px solid rgba(255,82,82,.45); background: rgba(255,82,82,.08); color: var(--err); }
+.msg.ok { border: 1px solid var(--g1); background: rgba(0,230,118,.08); color: var(--g1); }
+
+/* ── tables ── */
+table { width: 100%; border-collapse: collapse; font-size: .72rem; }
+th {
+  text-align: left; padding: 10px 12px; font-size: .6rem;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--g1);
+  border-bottom: 1px solid var(--g-glow); white-space: nowrap;
+}
+td { padding: 10px 12px; border-bottom: 1px solid rgba(0,230,118,.07); vertical-align: middle; }
+tr:hover td { background: rgba(0,230,118,.03); }
+
+.badge {
+  display: inline-block; padding: 2px 9px; border-radius: 2px;
+  font-size: .58rem; letter-spacing: .1em; text-transform: uppercase;
+  border: 1px solid var(--g-glow); color: var(--g-dim);
+}
+.badge.admin { border-color: #ffd740; color: #ffd740; }
+.badge.pro   { border-color: var(--g3); color: var(--g3); }
+.badge.off   { border-color: rgba(255,82,82,.5); color: var(--err); }
+
+/* usage meter */
+.meter { height: 4px; background: rgba(0,230,118,.1); border-radius: 2px; overflow: hidden; min-width: 70px; }
+.meter > div {
+  height: 100%; border-radius: 2px;
+  background: linear-gradient(90deg, #00c853, #00e676);
+  box-shadow: 0 0 5px var(--g1); transition: width .4s;
+}
+.meter.warn > div { background: linear-gradient(90deg,#ff9800,#ffd740); box-shadow: 0 0 5px #ffd740; }
+.meter.full > div { background: linear-gradient(90deg,#d32f2f,#ff5252); box-shadow: 0 0 5px var(--err); }
+
+@media (max-width: 720px) {
+  .nav { padding: 14px 16px; }
+  .panel { padding: 20px 16px; }
+  table { font-size: .66rem; }
+  th, td { padding: 8px 7px; }
+}

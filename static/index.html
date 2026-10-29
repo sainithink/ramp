@@ -68,6 +68,24 @@
     .logo span { color: rgba(255,255,255,.5); }
     .hdr-sub { font-size: .52rem; letter-spacing: .16em; color: var(--g-dim); }
     #clock { color: var(--g1); font-size: .62rem; }
+    .hdr-acct { display: flex; align-items: center; gap: 14px; font-size: .6rem; }
+    .hdr-acct a { color: var(--g-dim); letter-spacing: .14em; text-decoration: none; }
+    .hdr-acct a:hover { color: var(--g1); }
+    #usage-label { color: var(--g-dim); letter-spacing: .1em; }
+    #usage-label.warn { color: #ffd740; }
+    #usage-label.full { color: #ff5252; }
+    #signout {
+      font-family: 'Orbitron', sans-serif; font-size: .5rem; letter-spacing: .12em;
+      padding: 4px 10px; border: 1px solid var(--g-glow); border-radius: 3px;
+      background: transparent; color: var(--g-dim); cursor: pointer; transition: all .2s;
+    }
+    #signout:hover { border-color: var(--g1); color: var(--g1); }
+    #quota-banner {
+      display: none; margin: 0 auto 4px; max-width: 450px; padding: 9px 13px;
+      border: 1px solid rgba(255,82,82,.5); background: rgba(255,82,82,.08);
+      border-radius: 3px; color: #ff5252; font-size: .66rem; text-align: center;
+    }
+    #quota-banner.show { display: block; }
 
     /* ── PANELS ── */
     .panel {
@@ -483,8 +501,13 @@
 
 <header>
   <div class="logo">S<span>.</span>A<span>.</span>I<span>.</span>R<span>.</span>A</div>
-  <div class="hdr-sub">SAINITHIN ARTIFICIAL INTELLIGENCE RESPONSE ASSISTANT</div>
-  <div id="clock">--:--:--</div>
+  <div class="hdr-sub" id="hdr-sub">SAINITHIN ARTIFICIAL INTELLIGENCE RESPONSE ASSISTANT</div>
+  <div class="hdr-acct">
+    <span id="usage-label" title="Conversations used this month">—</span>
+    <a id="admin-link" href="/admin" style="display:none">ADMIN</a>
+    <span id="clock">--:--:--</span>
+    <button id="signout" onclick="signOut()">SIGN OUT</button>
+  </div>
 </header>
 
 <aside class="col-left">
@@ -602,7 +625,7 @@
   </div>
 
   <div class="core-inner">
-    <div class="core-name">SAIRA</div>
+    <div class="core-name" id="core-name">SAIRA</div>
     <div class="core-sub">AI CORE · ONLINE</div>
     <div id="state-badge">STANDBY</div>
     <div class="think-dots"><span></span><span></span><span></span></div>
@@ -610,6 +633,7 @@
 
   <canvas id="waveform" width="580" height="84"></canvas>
 
+  <div id="quota-banner"></div>
   <div id="heard-flash">◆ INPUT RECEIVED</div>
 
   <div class="speech-area">
@@ -677,6 +701,47 @@
 <audio id="player" autoplay></audio>
 
 <script>
+// ── Account ───────────────────────────────────────────────────────────────────
+let WAKE_NAME = 'Saira';
+let ME = null;
+
+async function loadMe() {
+  try {
+    const res = await fetch('/api/me');
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    ME = await res.json();
+    WAKE_NAME = ME.wake_name || 'Saira';
+
+    document.title = `${WAKE_NAME.toUpperCase()} · voice assistant`;
+    document.getElementById('core-name').textContent = WAKE_NAME.toUpperCase();
+    document.getElementById('hdr-sub').textContent =
+      `${(ME.display_name || ME.email).toUpperCase()} · CALLS IT ${WAKE_NAME.toUpperCase()}`;
+    if (ME.role === 'admin') document.getElementById('admin-link').style.display = '';
+
+    renderUsage();
+    // The badge may already be showing a stale default name.
+    if (document.body.className) setState(document.body.className);
+  } catch (e) { console.warn('account load failed', e); }
+}
+
+function renderUsage() {
+  if (!ME) return;
+  const el = document.getElementById('usage-label');
+  el.textContent = `${ME.used}/${ME.limit}`;
+  el.className = ME.used >= ME.limit ? 'full' : (ME.used / ME.limit >= 0.8 ? 'warn' : '');
+}
+
+function showQuota(message) {
+  const b = document.getElementById('quota-banner');
+  b.textContent = message;
+  b.classList.add('show');
+}
+
+async function signOut() {
+  try { await fetch('/api/logout', { method: 'POST' }); } catch (e) {}
+  window.location.href = '/';
+}
+
 // ── Clock + uptime ────────────────────────────────────────────────────────────
 const clockEl  = document.getElementById('clock');
 const uptimeEl = document.getElementById('stat-uptime');
@@ -767,7 +832,7 @@ const connLbl = document.getElementById('conn-label');
 
 function setState(state) {
   const labels = {
-    wake:      'SAY "HEY SAIRA"',
+    wake:      `SAY "HEY ${WAKE_NAME.toUpperCase()}"`,
     listening: 'LISTENING',
     always_on: 'ALWAYS LISTENING',
     thinking:  'PROCESSING',
@@ -931,7 +996,9 @@ function connect() {
       document.getElementById(id).className = 'dot');
   };
 
-  ws.onclose = () => {
+  ws.onclose = (ev) => {
+    if (ev.code === 4401) { window.location.href = '/login'; return; }
+    if (ev.code === 4403) { showQuota('This account has been disabled.'); return; }
     connDot.className = 'dot off';
     connLbl.textContent = 'OFFLINE';
     setState('error');
@@ -945,7 +1012,12 @@ function connect() {
     if (event.data instanceof ArrayBuffer) { appendAudio(event.data); return; }
     const msg = JSON.parse(event.data);
 
-    if (msg.type === 'stop_audio') {
+    if (msg.type === 'quota') {
+      showQuota(msg.message);
+      addLog(msg.message, 'error');
+      return;
+
+    } else if (msg.type === 'stop_audio') {
       killAudio();
       responseEl.classList.remove('streaming');
       boxResponse.classList.remove('active');
@@ -955,10 +1027,15 @@ function connect() {
     } else if (msg.type === 'status') {
       setState(msg.state);
       if (msg.state === 'thinking') {
+        document.body.dataset.counted = 'pending';
         queryCount++;
         document.getElementById('stat-queries').textContent = queryCount;
       }
       if (msg.state === 'wake' || msg.state === 'always_on') {
+        if (ME && document.body.dataset.counted === 'pending') {
+          ME.used += 1; renderUsage();
+          delete document.body.dataset.counted;
+        }
         playCollectedAudio();
         responseEl.classList.remove('streaming');
         boxResponse.classList.remove('active');
@@ -990,7 +1067,7 @@ function connect() {
 }
 
 initMediaSource();
-connect();
+loadMe().then(connect);
 </script>
 </body>
 </html>

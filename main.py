@@ -11,15 +11,16 @@ import av
 import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 
 from core.session import VoiceSession
 from core.whisper_client import get_model, _transcribe_pcm
 from core.ollama_client import get_response, warmup_llm
 from core.kokoro_client import synthesize_stream, get_kokoro
-from core.profile import load_profile
-from core.memory import init as init_memory, save_exchange
-from core.preferences import init as init_prefs, learn as learn_prefs
+from core.memory import _get_model as _warm_embedder
+from core.db import User, get_session, init_db, over_limit, record_usage
+from core.routes import router as http_router
+from core import auth, wake
+from core.userdata import get_context
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
 log = logging.getLogger(__name__)
@@ -80,26 +81,9 @@ def _webm_to_pcm16k(webm_bytes: bytes) -> np.ndarray:
         return np.array([], dtype=np.int16)
 
 
-# Whisper never actually writes "Saira". Feeding it TTS of "Hey Saira" across
-# four voices and three speeds produced "sarah" 33 times out of 36 — so matching
-# the literal spelling meant the wake word could never fire. These are the
-# homophones it does emit, plus close spellings of the same sound.
-_WAKE_VARIANTS = (
-    "saira", "sairah", "sarah", "sara", "sayra", "seira", "syra", "sarai",
-)
-_WAKE_RE = re.compile(r"\b(?:%s)\b" % "|".join(_WAKE_VARIANTS), re.IGNORECASE)
-_WAKE_PREFIX_RE = re.compile(
-    r"^(?:hey|hi|hello|ok|okay)?[\s,]*(?:%s)[,!.\s]*" % "|".join(_WAKE_VARIANTS),
-    re.IGNORECASE,
-)
-
-
-def _contains_saira(text: str) -> bool:
-    return bool(_WAKE_RE.search(text))
-
-
-def _strip_wake_word(text: str) -> str:
-    return _WAKE_PREFIX_RE.sub("", text).strip()
+# Wake-word matching now lives in core/wake.py, keyed by each user's chosen
+# name. The hard-coded Saira homophone list that used to sit here cannot work
+# once every account names its own assistant.
 
 
 def _is_stop_command(text: str) -> bool:
@@ -110,7 +94,7 @@ def _is_stop_command(text: str) -> bool:
     """
     # Strip ASCII punctuation only — [^\w\s] would eat Telugu combining vowel
     # marks, which are category Mn and so not matched by \w.
-    cleaned = re.sub(r"""[!-/:-@\[-`{-~]""", "", _strip_wake_word(text).lower()).strip()
+    cleaned = re.sub(r"""[!-/:-@\[-`{-~]""", "", (text or "").lower()).strip()
     if not cleaned or len(cleaned.split()) > 4:
         return False
     return any(w in cleaned for w in _STOP_WORDS)
@@ -119,12 +103,11 @@ def _is_stop_command(text: str) -> bool:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("Saira starting up…")
-    load_profile()
+    init_db()
     await asyncio.gather(
         asyncio.to_thread(get_model),
         asyncio.to_thread(get_kokoro),
-        asyncio.to_thread(init_memory),
-        asyncio.to_thread(init_prefs),
+        asyncio.to_thread(_warm_embedder),   # shared encoder, loaded once for all users
         warmup_llm(),
     )
     log.info("Saira ready.")
@@ -134,11 +117,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
-
-
-@app.get("/")
-async def index():
-    return FileResponse("static/index.html")
+app.include_router(http_router)
 
 
 @app.get("/favicon.ico")
@@ -153,8 +132,25 @@ async def favicon():
 
 @app.websocket("/ws/voice")
 async def voice_endpoint(ws: WebSocket):
+    # Authenticate from the session cookie before accepting, so an unauthenticated
+    # socket never reaches the models or anyone's stored data.
+    uid = auth.read_token(ws.cookies.get(auth.COOKIE_NAME, ""))
+    if not uid:
+        await ws.close(code=4401, reason="Sign in required")
+        log.info(">>> WebSocket rejected: not signed in")
+        return
+    with get_session() as s:
+        user = s.get(User, uid)
+        if not user or not user.is_active:
+            await ws.close(code=4403, reason="Account unavailable")
+            log.info(">>> WebSocket rejected: inactive/unknown user")
+            return
+        user_id, wake_name, display = user.id, user.wake_name, user.display_name
+
     await ws.accept()
-    log.info(">>> WebSocket connected")
+    ctx = get_context(user_id, wake_name)
+    log.info(">>> WebSocket connected: %s (%s), wake word %r",
+             display or user_id[:8], user_id[:8], wake_name)
     session = VoiceSession(ws=ws)
 
     mode           = "wake"   # wake | command | processing
@@ -211,16 +207,35 @@ async def voice_endpoint(ws: WebSocket):
         nonlocal mode
         log.info(">>> Running response for: '%s'", text)
         await send_json({"type": "transcript", "text": text})
+
+        # Check the quota before spending any model time on this turn.
+        with get_session() as _s:
+            _u = _s.get(User, user_id)
+            if _u is None or not _u.is_active:
+                await send_json({"type": "status", "state": "error"})
+                await send_json({"type": "quota", "blocked": True,
+                                 "message": "This account is no longer active."})
+                return
+            if over_limit(_s, _u):
+                log.info(">>> %s is over their monthly limit", user_id[:8])
+                await send_json({"type": "quota", "blocked": True,
+                                 "message": f"You've used all {_u.monthly_limit} "
+                                            f"conversations this month."})
+                await send_json({"type": "status",
+                                 "state": "always_on" if listening_mode == "always_on" else "wake"})
+                return
+
         await send_json({"type": "status", "state": "thinking"})
         # Learn standing instructions before generating, so "call me Sai"
         # applies to this very reply and not just later ones.
-        for rule in await asyncio.to_thread(learn_prefs, text):
+        for rule in await asyncio.to_thread(ctx.preferences.learn, text):
             await send_json({"type": "preference", "text": rule})
         try:
             resp_chunks = []
 
             async def text_iter():
-                async for delta in get_response(text, session.conversation_history, session, on_tool_call=on_tool_call):
+                async for delta in get_response(text, session.conversation_history, session,
+                                                on_tool_call=on_tool_call, ctx=ctx):
                     resp_chunks.append(delta)
                     await send_json({"type": "response_chunk", "text": delta})
                     yield delta
@@ -228,7 +243,10 @@ async def voice_endpoint(ws: WebSocket):
             await synthesize_stream(text_iter(), session.audio_out_queue)
             full_reply = "".join(resp_chunks)
             _log_exchange(text, full_reply)
-            await asyncio.to_thread(save_exchange, text, full_reply)
+            await asyncio.to_thread(ctx.memory.save_exchange, text, full_reply)
+            # One completed exchange = one unit of usage.
+            with get_session() as _s:
+                record_usage(_s, user_id)
         except asyncio.CancelledError:
             # stop_response() already reset mode and notified the client
             log.info(">>> run_response cancelled mid-flight")
@@ -263,7 +281,7 @@ async def voice_endpoint(ws: WebSocket):
             return
         # Auto-detect language for commands (supports Telugu + English)
         text = await asyncio.to_thread(_transcribe_pcm, pcm, True, None)
-        text = _strip_wake_word(text).strip()
+        text = wake.strip_wake(text, ctx.wake_name).strip()
         log.info("Command transcript: '%s'", text)
         if not text:
             if listening_mode == "always_on":
@@ -366,8 +384,8 @@ async def voice_endpoint(ws: WebSocket):
                             # English-locked, no VAD — finds "saira" reliably
                             text = await asyncio.to_thread(_transcribe_pcm, pcm, False, "en", True)
                             log.info("Wake window: '%s'", text)
-                            if text and _contains_saira(text):
-                                command = _strip_wake_word(text).strip()
+                            if text and wake.contains_wake(text, ctx.wake_name):
+                                command = wake.strip_wake(text, ctx.wake_name).strip()
                                 if command:
                                     # Question already in wake phrase — respond immediately
                                     log.info(">>> Wake+command in one phrase: '%s'", command)

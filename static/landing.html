@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>SAIRA — your own voice assistant</title>
+  <link rel="stylesheet" href="/static/theme.css"/>
+  <style>
+    .hero { max-width: 980px; margin: 0 auto; padding: 70px 24px 50px; text-align: center; }
+    .hero h1 {
+      font-family: 'Orbitron', sans-serif; font-weight: 900;
+      font-size: clamp(2.1rem, 7vw, 3.6rem); letter-spacing: .22em;
+      color: #fff; text-shadow: 0 0 26px var(--g1), 0 0 60px rgba(0,230,118,.3);
+      margin-bottom: 14px;
+    }
+    .tagline { font-size: clamp(.8rem,2.4vw,1rem); color: var(--g1); letter-spacing: .1em; margin-bottom: 10px; }
+    .sub { color: var(--g-dim); max-width: 620px; margin: 0 auto 34px; font-size: .86rem; }
+    .cta { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+
+    /* robot, same build as the assistant screen */
+    .robot { width: 190px; height: 205px; margin: 0 auto 26px; display: block;
+             filter: drop-shadow(0 0 14px rgba(0,230,118,.4)); animation: breathe 4s ease-in-out infinite; }
+    @keyframes breathe { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
+    .r-plate   { fill:#0a1f14; stroke:var(--g1); stroke-width:1.6; }
+    .r-plate-2 { fill:#071710; stroke:rgba(0,230,118,.45); stroke-width:1.1; }
+    .r-line    { stroke:rgba(0,230,118,.35); stroke-width:1; fill:none; }
+    .r-eye     { fill:var(--g1); filter:drop-shadow(0 0 6px var(--g1)); animation: blink 5s ease-in-out infinite; transform-origin:center; }
+    @keyframes blink { 0%,92%,100%{transform:scaleY(1)} 95%{transform:scaleY(.1)} }
+    .r-dot     { fill:var(--g1); opacity:.3; animation: shimmer 2.4s ease-in-out infinite; }
+    @keyframes shimmer { 0%,100%{opacity:.18} 50%{opacity:.8} }
+    .r-bar     { fill:var(--g3); animation: talk .45s ease-in-out infinite; transform-origin:center; transform-box:fill-box; }
+    .r-bar:nth-of-type(2){animation-delay:.07s} .r-bar:nth-of-type(3){animation-delay:.14s}
+    .r-bar:nth-of-type(4){animation-delay:.05s} .r-bar:nth-of-type(5){animation-delay:.12s}
+    @keyframes talk { 0%,100%{transform:scaleY(.3)} 50%{transform:scaleY(1)} }
+
+    .features { max-width: 980px; margin: 0 auto; padding: 0 24px 70px;
+                display: grid; grid-template-columns: repeat(auto-fit,minmax(250px,1fr)); gap: 16px; }
+    .feat h3 { font-family:'Orbitron',sans-serif; font-size:.74rem; letter-spacing:.14em;
+               color: var(--g1); margin-bottom: 9px; text-transform: uppercase; }
+    .feat p { font-size: .76rem; color: var(--g-dim); }
+    .foot { text-align:center; padding: 22px; border-top: 1px solid var(--g-glow);
+            font-size: .62rem; color: var(--g-dim); letter-spacing: .1em; }
+  </style>
+</head>
+<body>
+<div class="scan-line"></div>
+<div class="wrap">
+
+  <nav class="nav">
+    <div class="brand">S<span>.</span>A<span>.</span>I<span>.</span>R<span>.</span>A</div>
+    <div class="nav-right">
+      <a href="/login">Sign in</a>
+      <a class="btn" href="/register">Create account</a>
+    </div>
+  </nav>
+
+  <section class="hero">
+    <svg class="robot" viewBox="0 0 240 260" xmlns="http://www.w3.org/2000/svg">
+      <line class="r-line" x1="120" y1="14" x2="120" y2="30" stroke-width="2"/>
+      <circle class="r-dot" cx="120" cy="11" r="4"/>
+      <rect class="r-plate-2" x="24" y="98" width="20" height="50" rx="9"/>
+      <rect class="r-plate-2" x="196" y="98" width="20" height="50" rx="9"/>
+      <rect class="r-plate" x="44" y="28" width="152" height="168" rx="46"/>
+      <path class="r-line" d="M60,74 Q120,54 180,74"/>
+      <rect class="r-plate-2" x="60" y="82" width="120" height="98" rx="30"/>
+      <ellipse class="r-eye" cx="93" cy="115" rx="15" ry="10"/>
+      <ellipse class="r-eye" cx="147" cy="115" rx="15" ry="10"/>
+      <circle class="r-dot" cx="72" cy="137" r="2.4"/><circle class="r-dot" cx="86" cy="146" r="2.4"/>
+      <circle class="r-dot" cx="154" cy="146" r="2.4"/><circle class="r-dot" cx="168" cy="137" r="2.4"/>
+      <rect class="r-bar" x="100" y="156" width="4" height="18" rx="2"/>
+      <rect class="r-bar" x="109" y="152" width="4" height="26" rx="2"/>
+      <rect class="r-bar" x="118" y="150" width="4" height="30" rx="2"/>
+      <rect class="r-bar" x="127" y="152" width="4" height="26" rx="2"/>
+      <rect class="r-bar" x="136" y="156" width="4" height="18" rx="2"/>
+      <rect class="r-plate-2" x="100" y="196" width="40" height="16" rx="5"/>
+      <path class="r-plate" d="M56,254 Q60,218 100,210 L140,210 Q180,218 184,254 Z"/>
+    </svg>
+
+    <h1>SAIRA</h1>
+    <div class="tagline">A voice assistant that runs entirely on our own hardware</div>
+    <p class="sub">
+      Talk to it and it talks back. It remembers what you tell it, learns how you
+      like to be addressed, and answers to whatever name you give it — yours doesn't
+      have to be called Saira.
+    </p>
+    <div class="cta">
+      <a class="btn" href="/register">Get started — free</a>
+      <a class="btn" href="/login" style="border-color:var(--g-glow);color:var(--g-dim)">Sign in</a>
+    </div>
+  </section>
+
+  <section class="features">
+    <div class="panel feat">
+      <h3>Name it yourself</h3>
+      <p>Call it Jarvis, Nova, Krishna — anything you like. It listens for your name
+         phonetically, so it still wakes up even when speech recognition spells it differently.</p>
+    </div>
+    <div class="panel feat">
+      <h3>It remembers</h3>
+      <p>Past conversations are stored encrypted and recalled when relevant. Say
+         “call me Sai” once and it sticks, on every reply from then on.</p>
+    </div>
+    <div class="panel feat">
+      <h3>Runs locally</h3>
+      <p>Speech recognition, the language model and the voice all run on our own
+         server. No third-party AI service sees a word of your conversation.</p>
+    </div>
+    <div class="panel feat">
+      <h3>Speaks Telugu too</h3>
+      <p>Ask in Telugu and it answers in Telugu. Ask in English and it stays in
+         English, even when it remembers an older conversation in another language.</p>
+    </div>
+    <div class="panel feat">
+      <h3>Interrupt it</h3>
+      <p>Say “stop” while it's talking and it stops mid-sentence, the way a person
+         would. No waiting for it to finish.</p>
+    </div>
+    <div class="panel feat">
+      <h3>Free to start</h3>
+      <p>100 conversations a month at no cost, no card required. Paid plans with
+         higher limits are coming.</p>
+    </div>
+  </section>
+
+  <div class="foot">SAINITHIN ARTIFICIAL INTELLIGENCE RESPONSE ASSISTANT</div>
+</div>
+</body>
+</html>
