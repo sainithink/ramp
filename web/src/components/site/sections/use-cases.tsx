@@ -19,6 +19,8 @@ type UseCase = {
   title: string
   body: string
   says: string[]
+  /** Needs SAIRA running on the machine it is driving, not on a server. */
+  desktopOnly?: boolean
 }
 
 /**
@@ -30,24 +32,28 @@ const USE_CASES: UseCase[] = [
   {
     icon: Music,
     title: 'Put music and video on',
+    desktopOnly: true,
     body: 'Name a song, an artist or a video and it finds it on YouTube and starts playing — no typing, no tab hunting.',
     says: ['Play Arijit Singh', 'Put on some lo-fi', 'Play the new Pushpa song'],
   },
   {
     icon: AppWindow,
     title: 'Open sites and apps',
+    desktopOnly: true,
     body: 'It opens any website or app on the machine by name, so you can keep your hands where they are.',
     says: ['Open sainith.in', 'Open Spotify', 'Open my GitHub'],
   },
   {
     icon: Laptop,
     title: 'Run your computer',
+    desktopOnly: true,
     body: 'Volume, mute, screenshots, and what is playing right now — the small things you reach for a dozen times a day.',
     says: ['Turn the volume down to 20', 'Mute it', 'Take a screenshot', 'What’s playing?'],
   },
   {
     icon: Search,
     title: 'Search without stopping',
+    desktopOnly: true,
     body: 'Ask it to look something up and it runs the search and opens the results while you carry on talking.',
     says: ['Google the PERM processing times', 'Look up train times to Warangal'],
   },
@@ -90,7 +96,8 @@ export function UseCases() {
         <SectionHeading
           eyebrow="What you can use it for"
           title="Nine things you can say today"
-          body="Every one of these is wired up and working — not a roadmap. Say it out loud and it happens."
+          body="Every one of these is wired up and working — not a roadmap. The six marked
+                for your own machine need SAIRA running on it; the rest work anywhere."
         />
 
         <div className="mt-14 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -111,6 +118,11 @@ export function UseCases() {
                   </div>
 
                   <h3 className="mt-5 text-base font-medium">{uc.title}</h3>
+                  {uc.desktopOnly && (
+                    <span className="mt-1.5 inline-block rounded border border-border px-1.5 py-0.5 font-mono text-[0.6rem] text-muted-foreground">
+                      on your own machine
+                    </span>
+                  )}
                   <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{uc.body}</p>
 
                   <ul className="mt-5 space-y-1.5 border-t border-border pt-4">

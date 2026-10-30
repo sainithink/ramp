@@ -8,7 +8,7 @@ from typing import AsyncIterator, Callable, Awaitable, Optional
 
 import httpx
 from core.dpo_examples import get_few_shot_examples
-from tools import TOOL_DEFINITIONS, dispatch
+from tools import TOOL_DEFINITIONS, available_tool_names, dispatch
 
 log = logging.getLogger(__name__)
 
@@ -26,14 +26,7 @@ _BASE_PROMPT = (
     "Keep every reply to one or two short sentences max. No lists, no bullet points, no long explanations. "
     "Answer questions directly with facts. "
     "If you don't know a FACT, say exactly 'I don't have that information' — never guess, never make up facts, never call a tool as a substitute for not knowing. "
-    "YOUR CAPABILITIES — you really can do all of these, on this Mac, right now: "
-    "play songs and videos on YouTube; open any website; search Google; open Mac apps "
-    "(Spotify, Chrome, Firefox, Terminal, VS Code and others); set, mute and unmute the volume; "
-    "take a screenshot; say what's currently playing; report the weather; tell Telugu stories. "
-    "When the user ASKS whether you can do one of these ('can you play X?', 'are you able to open Y?'), "
-    "the answer is YES — do not deny it, just DO it by calling the tool. Never say 'I don't have that "
-    "capability' or 'I can't do that' about anything on this list. The 'I don't have that information' "
-    "line is ONLY for factual questions you don't know the answer to — never for your own abilities. "
+    "{capabilities}"
     "TOOL USE RULES — follow these strictly: "
     "  • get_story: ONLY when the user says 'tell me a story', 'కథ చెప్పు', or explicitly asks for a story. NEVER for any other question. "
     "  • get_weather: ONLY when the user asks about weather. "
@@ -53,6 +46,29 @@ _BASE_PROMPT = (
     "LANGUAGE: Match the language of the user's CURRENT message only. If this message is in "
     "English, reply in English — even if past conversations shown to you were in Telugu. "
     "Only reply in Telugu script when the current message itself is Telugu."
+)
+
+_DESKTOP_CAPABILITIES = (
+    "YOUR CAPABILITIES — you really can do all of these, on this Mac, right now: "
+    "play songs and videos on YouTube; open any website; search Google; open Mac apps "
+    "(Spotify, Chrome, Firefox, Terminal, VS Code and others); set, mute and unmute the volume; "
+    "take a screenshot; say what's currently playing; report the weather; tell Telugu stories. "
+    "When the user ASKS whether you can do one of these ('can you play X?', 'are you able to open Y?'), "
+    "the answer is YES — do not deny it, just DO it by calling the tool. Never say 'I don't have that "
+    "capability' or 'I can't do that' about anything on this list. The 'I don't have that information' "
+    "line is ONLY for factual questions you don't know the answer to — never for your own abilities. "
+)
+
+# Hosted, there is no desktop to drive: promising to open apps would be a lie.
+_HOSTED_CAPABILITIES = (
+    "YOUR CAPABILITIES — you really can do these right now: answer questions from what you know; "
+    "report the weather for any city; tell Telugu stories; and remember what this user has told you. "
+    "When the user asks whether you can do one of these, the answer is YES — just do it. "
+    "You are running on a server, NOT on the user's own computer, so you cannot open their apps, "
+    "play audio on their machine, change their volume or take screenshots. If they ask for one of "
+    "those, say plainly that it only works when you run on their own computer — do not pretend to "
+    "do it. The 'I don't have that information' line is ONLY for factual questions you don't know "
+    "the answer to — never for your own abilities. "
 )
 
 _STORY_KEYWORDS = {
@@ -104,6 +120,9 @@ def _tools_for_query(query: str) -> list:
         allowed |= {"open_app", "set_volume", "mute_volume", "unmute_volume",
                     "take_screenshot", "get_now_playing"}
 
+    # Never offer the model a tool this deployment cannot actually run.
+    allowed &= available_tool_names()
+
     return [
         {
             "type": "function",
@@ -144,7 +163,12 @@ def _build_system_prompt(user_query: str = "", ctx=None) -> str:
     """
     # The assistant answers to whatever this user named it.
     wake = (getattr(ctx, "wake_name", None) or "Saira").strip()
-    parts = [_BASE_PROMPT.replace("You are Saira,", f"You are {wake},")]
+    from tools import desktop_tools_enabled
+    capabilities = (_DESKTOP_CAPABILITIES if desktop_tools_enabled()
+                    else _HOSTED_CAPABILITIES)
+    parts = [_BASE_PROMPT
+             .replace("You are Saira,", f"You are {wake},")
+             .replace("{capabilities}", capabilities)]
 
     if ctx is None:
         return "\n\n".join(parts)

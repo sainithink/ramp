@@ -1,7 +1,36 @@
+import os
+import sys
+
 from tools.weather import get_weather
 from tools.stories import get_story, list_stories
 from tools.browser_control import play_youtube, open_website, google_search
 from tools.pc_control import open_app, set_volume, mute_volume, unmute_volume, take_screenshot, get_now_playing
+
+# Tools that act on the machine the server runs on: they open apps and windows,
+# change the volume, take screenshots. That is what you want on your own Mac and
+# exactly what you do not want on a shared server, where "open this website"
+# would mean the server's browser and "take a screenshot" would mean a picture
+# of the server. They are on for a desktop session and off when hosted.
+DESKTOP_TOOLS = frozenset({
+    "play_youtube", "open_website", "google_search",
+    "open_app", "set_volume", "mute_volume", "unmute_volume",
+    "take_screenshot", "get_now_playing",
+})
+
+
+def desktop_tools_enabled() -> bool:
+    """SAIRA_DESKTOP_TOOLS=on|off, or by platform when it is unset."""
+    setting = (os.environ.get("SAIRA_DESKTOP_TOOLS") or "auto").strip().lower()
+    if setting in ("on", "1", "true", "yes"):
+        return True
+    if setting in ("off", "0", "false", "no"):
+        return False
+    return sys.platform == "darwin"
+
+
+def available_tool_names() -> set[str]:
+    names = {t["name"] for t in TOOL_DEFINITIONS}
+    return names if desktop_tools_enabled() else names - DESKTOP_TOOLS
 
 TOOL_DEFINITIONS = [
     {
@@ -135,6 +164,10 @@ TOOL_DEFINITIONS = [
 
 
 async def dispatch(tool_name: str, tool_input: dict) -> str:
+    if tool_name in DESKTOP_TOOLS and not desktop_tools_enabled():
+        return ("That only works when I'm running on your own computer. "
+                "This one is hosted, so I can't reach your machine.")
+
     if tool_name == "get_weather":
         return await get_weather(**tool_input)
     if tool_name == "get_story":
