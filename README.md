@@ -9,7 +9,8 @@ A fully local voice assistant built with FastAPI. No cloud APIs or API keys requ
 | AI brain | Ollama + `llama3.2` |
 | Text-to-speech | Kokoro ONNX (`af_heart` voice) |
 | Weather data | Open-Meteo (free public API, no key) |
-| Frontend | Sci-fi HUD with push-to-talk + double-clap |
+| Frontend | React + Vite + Tailwind, with [Animate UI](https://animate-ui.com) primitives |
+| Accounts | SQLAlchemy + SQLite, per-user encrypted memory |
 
 ## Setup
 
@@ -35,10 +36,23 @@ wget https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v
 wget https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
 ```
 
-### 4. Run
+### 4. Frontend
+The pages are a React app in `web/` that builds into `static/build`. The build
+is committed, so this is only needed after changing anything under `web/`:
+
 ```bash
-python scripts/debug_server.py
-# Open http://localhost:8000
+nvm use 22            # Vite 8 needs Node 22
+cd web && npm install && npm run build
 ```
 
-Models load automatically on first startup. Whisper and Kokoro cache to `~/.cache/huggingface/` after the first run.
+See [web/README.md](web/README.md) for the dev server and the Animate UI setup.
+
+### 5. Run
+```bash
+.venv/bin/python -m uvicorn main:app --port 3001
+# Open http://localhost:3001
+```
+
+The first account to register becomes the admin. Models load automatically on
+first startup; Whisper and Kokoro cache to `~/.cache/huggingface/` after the
+first run.

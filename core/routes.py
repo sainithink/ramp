@@ -19,6 +19,20 @@ from core.db import (
 log = logging.getLogger(__name__)
 router = APIRouter()
 STATIC = Path("static")
+# The React app in web/ builds to here. Every page route returns the same shell;
+# react-router decides what to render, and the redirects below keep the
+# server-side gating we had when each page was its own file.
+SPA_SHELL = STATIC / "build" / "index.html"
+
+
+def spa() -> FileResponse:
+    if not SPA_SHELL.exists():
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "The frontend has not been built. Run `npm run build` in web/.",
+        )
+    # The shell names hashed asset files, so it must not be cached itself.
+    return FileResponse(SPA_SHELL, headers={"Cache-Control": "no-store"})
 
 
 # ── Session helpers ──────────────────────────────────────────────────────────
@@ -66,28 +80,28 @@ def _set_cookie(resp: Response, user_id: str) -> None:
 async def landing(user=Depends(current_user)):
     if user:
         return RedirectResponse("/app", status_code=302)
-    return FileResponse(STATIC / "landing.html")
+    return spa()
 
 
 @router.get("/login", include_in_schema=False)
 async def login_page(user=Depends(current_user)):
     if user:
         return RedirectResponse("/app", status_code=302)
-    return FileResponse(STATIC / "login.html")
+    return spa()
 
 
 @router.get("/register", include_in_schema=False)
 async def register_page(user=Depends(current_user)):
     if user:
         return RedirectResponse("/app", status_code=302)
-    return FileResponse(STATIC / "register.html")
+    return spa()
 
 
 @router.get("/app", include_in_schema=False)
 async def app_page(user=Depends(current_user)):
     if not user:
         return RedirectResponse("/login", status_code=302)
-    return FileResponse(STATIC / "index.html")
+    return spa()
 
 
 @router.get("/admin", include_in_schema=False)
@@ -96,7 +110,7 @@ async def admin_page(user=Depends(current_user)):
         return RedirectResponse("/login", status_code=302)
     if not user.is_admin:
         return RedirectResponse("/app", status_code=302)
-    return FileResponse(STATIC / "admin.html")
+    return spa()
 
 
 # ── Auth API ─────────────────────────────────────────────────────────────────

@@ -1,0 +1,149 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+@import "@fontsource/orbitron/700.css";
+@import "@fontsource/orbitron/900.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+    --font-heading: var(--font-sans);
+    --font-sans: 'Geist Variable', sans-serif;
+    --font-mono: 'Geist Mono Variable', ui-monospace, monospace;
+    --font-display: 'Orbitron', var(--font-sans);
+
+    /* Brand: the emerald of the logo, used as an accent rather than as body text. */
+    --color-brand: var(--brand);
+    --color-brand-soft: var(--brand-soft);
+    --color-brand-deep: var(--brand-deep);
+
+    --color-sidebar-ring: var(--sidebar-ring);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar: var(--sidebar);
+    --color-chart-5: var(--chart-5);
+    --color-chart-4: var(--chart-4);
+    --color-chart-3: var(--chart-3);
+    --color-chart-2: var(--chart-2);
+    --color-chart-1: var(--chart-1);
+    --color-ring: var(--ring);
+    --color-input: var(--input);
+    --color-border: var(--border);
+    --color-destructive: var(--destructive);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-accent: var(--accent);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-muted: var(--muted);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-secondary: var(--secondary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-primary: var(--primary);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-popover: var(--popover);
+    --color-card-foreground: var(--card-foreground);
+    --color-card: var(--card);
+    --color-foreground: var(--foreground);
+    --color-background: var(--background);
+    --radius-sm: calc(var(--radius) * 0.6);
+    --radius-md: calc(var(--radius) * 0.8);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) * 1.4);
+    --radius-2xl: calc(var(--radius) * 1.8);
+    --radius-3xl: calc(var(--radius) * 2.2);
+    --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* SAIRA ships dark only, so :root carries the dark palette and .dark repeats it
+   for any component that scopes itself to the class. */
+:root, .dark {
+    --brand: oklch(0.84 0.19 154);
+    --brand-soft: oklch(0.88 0.13 172);
+    --brand-deep: oklch(0.62 0.17 155);
+
+    --background: oklch(0.15 0.012 165);
+    --foreground: oklch(0.96 0.01 165);
+    --card: oklch(0.19 0.014 167);
+    --card-foreground: oklch(0.96 0.01 165);
+    --popover: oklch(0.2 0.015 167);
+    --popover-foreground: oklch(0.96 0.01 165);
+    --primary: oklch(0.84 0.19 154);
+    --primary-foreground: oklch(0.17 0.03 160);
+    --secondary: oklch(0.25 0.018 168);
+    --secondary-foreground: oklch(0.96 0.01 165);
+    --muted: oklch(0.24 0.014 168);
+    --muted-foreground: oklch(0.72 0.025 168);
+    --accent: oklch(0.27 0.03 165);
+    --accent-foreground: oklch(0.96 0.01 165);
+    --destructive: oklch(0.66 0.2 22);
+    --border: oklch(0.96 0.03 165 / 11%);
+    --input: oklch(0.96 0.03 165 / 14%);
+    --ring: oklch(0.84 0.19 154 / 55%);
+    --chart-1: oklch(0.84 0.19 154);
+    --chart-2: oklch(0.88 0.13 172);
+    --chart-3: oklch(0.72 0.14 185);
+    --chart-4: oklch(0.62 0.17 155);
+    --chart-5: oklch(0.5 0.12 160);
+    --radius: 0.75rem;
+    --sidebar: oklch(0.17 0.013 166);
+    --sidebar-foreground: oklch(0.96 0.01 165);
+    --sidebar-primary: oklch(0.84 0.19 154);
+    --sidebar-primary-foreground: oklch(0.17 0.03 160);
+    --sidebar-accent: oklch(0.25 0.02 167);
+    --sidebar-accent-foreground: oklch(0.96 0.01 165);
+    --sidebar-border: oklch(0.96 0.03 165 / 11%);
+    --sidebar-ring: oklch(0.84 0.19 154 / 55%);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  ::selection {
+    background: oklch(0.84 0.19 154 / 25%);
+  }
+}
+
+@utility font-display {
+  font-family: var(--font-display);
+}
+
+/* The wordmark: Orbitron, wide tracking, a soft emerald bloom behind it. */
+@utility wordmark {
+  font-family: var(--font-display);
+  font-weight: 900;
+  letter-spacing: 0.3em;
+  text-shadow: 0 0 24px oklch(0.84 0.19 154 / 35%);
+}
+
+/* A hairline emerald gradient, for section rules and card edges. */
+@utility rule-glow {
+  background-image: linear-gradient(
+    90deg,
+    transparent,
+    oklch(0.84 0.19 154 / 35%),
+    transparent
+  );
+}
+
+@utility glass {
+  background-color: oklch(0.19 0.014 167 / 55%);
+  backdrop-filter: blur(14px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}

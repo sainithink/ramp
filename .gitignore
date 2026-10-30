@@ -29,3 +29,11 @@ build/
 saira.db
 saira.db-wal
 saira.db-shm
+
+# Frontend: web/ holds the React source, static/build holds its compiled output.
+# The build is committed so deploying needs no Node toolchain on the server —
+# the blanket build/ rule above would otherwise swallow it.
+!static/build/
+web/node_modules/
+web/.vite/
+web/*.tsbuildinfo
