@@ -85,6 +85,12 @@ export const api = {
       body: JSON.stringify({ wake_name }),
     }),
 
+  changePassword: (current_password: string, new_password: string) =>
+    request<{ ok: boolean }>('/api/me/password', {
+      method: 'POST',
+      body: JSON.stringify({ current_password, new_password }),
+    }),
+
   adminUsers: () => request<AdminPayload>('/api/admin/users'),
 
   adminUpdate: (id: string, body: Record<string, unknown>) =>

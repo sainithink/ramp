@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { AnimatePresence, motion } from 'motion/react'
 import {
@@ -7,31 +7,22 @@ import {
   LogOut,
   Mic,
   MicOff,
-  Pencil,
+  Settings,
   Shield,
   Square,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { AccountDialog } from '@/components/account-dialog'
 import { Robot, type RobotMood } from '@/components/robot'
 import { Waveform } from '@/components/waveform'
 import { Wordmark } from '@/components/site/wordmark'
-import { FormError } from '@/components/site/form-error'
 import { UsageMeter } from '@/components/usage-meter'
 import { useMe } from '@/hooks/use-me'
 import { useVoiceSession, type VoiceState } from '@/hooks/use-voice-session'
-import { api, checkWakeName } from '@/lib/api'
+import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 const MOOD: Record<VoiceState, RobotMood> = {
@@ -66,7 +57,7 @@ function stateLabel(state: VoiceState, wakeName: string) {
 export default function AssistantPage() {
   const { me, loading, countExchange, setWakeName } = useMe()
   const session = useVoiceSession({ onExchange: countExchange })
-  const [renaming, setRenaming] = useState(false)
+  const [accountOpen, setAccountOpen] = useState(false)
 
   const wakeName = me?.wake_name ?? 'Saira'
 
@@ -96,6 +87,10 @@ export default function AssistantPage() {
 
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
             {me && <UsageMeter used={me.used} limit={me.limit} className="hidden sm:flex" />}
+            <Button variant="ghost" size="sm" onClick={() => setAccountOpen(true)}>
+              <Settings className="size-3.5" />
+              <span className="hidden sm:inline">Account</span>
+            </Button>
             {me?.role === 'admin' && (
               <Button variant="ghost" size="sm" asChild>
                 <Link to="/admin">
@@ -145,11 +140,11 @@ export default function AssistantPage() {
               {wakeName}
             </h1>
             <button
-              onClick={() => setRenaming(true)}
+              onClick={() => setAccountOpen(true)}
               className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-brand"
             >
-              <Pencil className="size-3" />
-              Change the name
+              <Settings className="size-3" />
+              Account settings
             </button>
           </div>
 
@@ -298,11 +293,12 @@ export default function AssistantPage() {
         </aside>
       </main>
 
-      <RenameDialog
-        open={renaming}
-        current={wakeName}
-        onOpenChange={setRenaming}
-        onSaved={setWakeName}
+      <AccountDialog
+        open={accountOpen}
+        onOpenChange={setAccountOpen}
+        wakeName={wakeName}
+        email={me?.email ?? ''}
+        onWakeNameSaved={setWakeName}
       />
 
       <audio ref={session.playerRef} autoPlay className="hidden" />
@@ -379,84 +375,5 @@ function Panel({
         )}
       </p>
     </motion.div>
-  )
-}
-
-function RenameDialog({
-  open,
-  current,
-  onOpenChange,
-  onSaved,
-}: {
-  open: boolean
-  current: string
-  onOpenChange: (v: boolean) => void
-  onSaved: (name: string) => void
-}) {
-  const [value, setValue] = useState(current)
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const check = useMemo(() => checkWakeName(value), [value])
-
-  useEffect(() => {
-    if (open) {
-      setValue(current)
-      setError(null)
-    }
-  }, [open, current])
-
-  async function save() {
-    if (!check.ok) {
-      setError(check.why)
-      return
-    }
-    setBusy(true)
-    try {
-      const res = await api.setWakeName(check.name)
-      onSaved(res.wake_name)
-      onOpenChange(false)
-    } catch (ex) {
-      setError(ex instanceof Error ? ex.message : 'Could not save the name.')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle>Change the name</DialogTitle>
-          <DialogDescription>
-            It takes effect on the next thing you say.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-3">
-          <FormError>{error}</FormError>
-          <Input
-            value={value}
-            maxLength={24}
-            autoFocus
-            onChange={(e) => setValue(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && save()}
-            aria-invalid={!check.ok}
-          />
-          <p className={cn('text-xs', check.ok ? 'text-muted-foreground' : 'text-destructive')}>
-            {check.ok ? `You'll say "Hey ${check.name}".` : check.why}
-          </p>
-        </div>
-
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button onClick={save} disabled={busy || !check.ok}>
-            {busy && <Loader2 className="size-3.5 animate-spin" />}
-            Save
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   )
 }

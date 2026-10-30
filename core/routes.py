@@ -39,12 +39,12 @@ def spa() -> FileResponse:
 
 def current_user(session_cookie: str | None = Cookie(default=None, alias=auth.COOKIE_NAME)):
     """Resolve the signed cookie to a user, or None when not signed in."""
-    uid = auth.read_token(session_cookie or "")
-    if not uid:
+    claims = auth.read_claims(session_cookie or "")
+    if not claims or not claims.get("sub"):
         return None
     with get_session() as s:
-        user = s.get(User, uid)
-        if user and user.is_active:
+        user = s.get(User, claims["sub"])
+        if user and user.is_active and auth.token_is_current(claims, user):
             s.expunge(user)
             return user
     return None
@@ -177,6 +177,26 @@ async def api_me(user=Depends(require_user)):
         "used": used, "limit": user.monthly_limit,
         "remaining": max(0, user.monthly_limit - used),
     }
+
+
+class PasswordBody(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.post("/api/me/password")
+async def api_change_password(body: PasswordBody, response: Response,
+                              user=Depends(require_user)):
+    with get_session() as s:
+        row = s.get(User, user.id)
+        try:
+            auth.change_password(s, row, body.current_password, body.new_password)
+        except auth.AuthError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    # Every session issued before now is void, this one included — hand back a
+    # fresh cookie so the person who just changed it is not signed out too.
+    _set_cookie(response, user.id)
+    return {"ok": True}
 
 
 class WakeNameBody(BaseModel):

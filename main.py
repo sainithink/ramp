@@ -134,16 +134,20 @@ async def favicon():
 async def voice_endpoint(ws: WebSocket):
     # Authenticate from the session cookie before accepting, so an unauthenticated
     # socket never reaches the models or anyone's stored data.
-    uid = auth.read_token(ws.cookies.get(auth.COOKIE_NAME, ""))
-    if not uid:
+    claims = auth.read_claims(ws.cookies.get(auth.COOKIE_NAME, ""))
+    if not claims or not claims.get("sub"):
         await ws.close(code=4401, reason="Sign in required")
         log.info(">>> WebSocket rejected: not signed in")
         return
     with get_session() as s:
-        user = s.get(User, uid)
-        if not user or not user.is_active:
+        user = s.get(User, claims["sub"])
+        if not user or not auth.token_is_current(claims, user):
+            await ws.close(code=4401, reason="Sign in required")
+            log.info(">>> WebSocket rejected: stale or unknown session")
+            return
+        if not user.is_active:
             await ws.close(code=4403, reason="Account unavailable")
-            log.info(">>> WebSocket rejected: inactive/unknown user")
+            log.info(">>> WebSocket rejected: inactive user")
             return
         user_id, wake_name, display = user.id, user.wake_name, user.display_name
 

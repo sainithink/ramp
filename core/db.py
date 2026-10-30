@@ -6,6 +6,7 @@ change, not a rewrite. WAL mode is on so reads don't block the writer.
 """
 from __future__ import annotations
 
+import logging
 import os
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -13,9 +14,11 @@ from pathlib import Path
 
 from sqlalchemy import (
     Boolean, DateTime, ForeignKey, Integer, String, Text,
-    create_engine, event, func, select,
+    create_engine, event, func, inspect, select, text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, Session
+
+log = logging.getLogger(__name__)
 
 DB_URL = os.environ.get("SAIRA_DB_URL", f"sqlite:///{Path('saira.db').resolve()}")
 
@@ -55,6 +58,9 @@ class User(Base):
     is_active:     Mapped[bool] = mapped_column(Boolean, default=True)
     created_at:    Mapped[datetime] = mapped_column(DateTime, default=_now)
     last_seen_at:  Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Set when the password changes. Sessions issued before this are refused,
+    # so changing the password actually signs other devices out.
+    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     usage: Mapped[list["UsageEvent"]] = relationship(
         back_populates="user", cascade="all, delete-orphan")
@@ -124,8 +130,36 @@ def get_session() -> Session:
     return Session(_engine, future=True)
 
 
+def _add_missing_columns() -> None:
+    """Add nullable columns that exist on the models but not yet in the file.
+
+    There is no migration tool here and create_all() only ever creates whole
+    tables, so a column added to a model would be invisible on an existing
+    database. Only nullable columns can be handled this way; anything more
+    involved needs a real migration.
+    """
+    inspector = inspect(_engine)
+    with _engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            if not inspector.has_table(table.name):
+                continue
+            existing = {c["name"] for c in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in existing:
+                    continue
+                if not column.nullable:
+                    log.warning("Column %s.%s is new but not nullable — "
+                                "it needs a migration by hand.", table.name, column.name)
+                    continue
+                type_sql = column.type.compile(_engine.dialect)
+                conn.execute(text(
+                    f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {type_sql}'))
+                log.info("Added column %s.%s", table.name, column.name)
+
+
 def init_db() -> None:
     Base.metadata.create_all(_engine)
+    _add_missing_columns()
 
 
 # ── Usage ────────────────────────────────────────────────────────────────────

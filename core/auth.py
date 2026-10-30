@@ -71,14 +71,38 @@ def make_token(user_id: str) -> str:
     )
 
 
-def read_token(token: str) -> str | None:
-    """Return the user id, or None if the token is missing, invalid or expired."""
+def read_claims(token: str) -> dict | None:
+    """Return the token's claims, or None if it is missing, invalid or expired."""
     if not token:
         return None
     try:
-        return jwt.decode(token, _secret(), algorithms=[_ALGO]).get("sub")
+        return jwt.decode(token, _secret(), algorithms=[_ALGO])
     except jwt.PyJWTError:
         return None
+
+
+def read_token(token: str) -> str | None:
+    """Return the user id, or None if the token is missing, invalid or expired."""
+    claims = read_claims(token)
+    return claims.get("sub") if claims else None
+
+
+def token_is_current(claims: dict, user: User) -> bool:
+    """False for a session issued before the password was last changed.
+
+    Without this a stolen cookie would keep working after the password was
+    changed, which is usually the very reason someone changes it.
+    """
+    changed = getattr(user, "password_changed_at", None)
+    if changed is None:
+        return True
+    issued = claims.get("iat")
+    if issued is None:
+        return False
+    if changed.tzinfo is None:                       # SQLite hands back naive datetimes
+        changed = changed.replace(tzinfo=timezone.utc)
+    # A second of slack: `iat` is whole seconds, the column keeps microseconds.
+    return datetime.fromtimestamp(issued, timezone.utc) >= changed - timedelta(seconds=1)
 
 
 # ── Validation ───────────────────────────────────────────────────────────────
@@ -152,6 +176,21 @@ def register(session: Session, email: str, password: str,
     session.refresh(user)
     log.info("Registered %s (%s)", email, user.role)
     return user
+
+
+def change_password(session: Session, user: User, current: str, new: str) -> None:
+    """Replace a user's password, having checked they know the old one."""
+    if not verify_password(current, user.password_hash):
+        raise AuthError("That is not your current password.")
+    if len(new) < MIN_PASSWORD:
+        raise AuthError(f"Password must be at least {MIN_PASSWORD} characters.")
+    if verify_password(new, user.password_hash):
+        raise AuthError("That is already your password.")
+
+    user.password_hash = hash_password(new)
+    user.password_changed_at = datetime.now(timezone.utc)
+    session.commit()
+    log.info("Password changed for %s", user.email)
 
 
 def authenticate(session: Session, email: str, password: str) -> User:
