@@ -11,32 +11,46 @@ DOMAIN="${1:?usage: provision.sh <domain> <admin-email>}"
 ADMIN_EMAIL="${2:?usage: provision.sh <domain> <admin-email>}"
 APP_DIR=/opt/saira
 APP_USER=saira
-REPO="${SAIRA_REPO:-https://github.com/sainithink/jarvis-code-share.git}"
 
 say() { printf '\n\033[1;32m==> %s\033[0m\n' "$*"; }
 
 say "System packages"
 export DEBIAN_FRONTEND=noninteractive
+
+# Some Ubuntu images ship with only the release pocket enabled. That machine
+# gets no security updates, and its installed packages end up newer than
+# anything apt can still see, so python3.12-venv and build-essential refuse to
+# resolve. Add the missing pockets before anything else depends on them.
+CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")
+for f in /etc/apt/sources.list.d/*.sources; do
+  [ -e "$f" ] || continue
+  if grep -q "^Suites: $CODENAME\$" "$f"; then
+    cp -n "$f" "$f.bak" 2>/dev/null || true
+    sed -i "s/^Suites: $CODENAME\$/Suites: $CODENAME $CODENAME-updates $CODENAME-security $CODENAME-backports/" "$f"
+    echo "   Enabled $CODENAME-updates and -security in $(basename "$f")"
+  fi
+done
+
 apt-get update -qq
+# Versioned, not the python3-* metapackages: those pin an exact python3
+# version and break the moment the installed one has moved on.
+PYV=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
 apt-get install -y -qq \
-  python3 python3-venv python3-dev build-essential pkg-config git curl \
-  ffmpeg libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev \
-  libswscale-dev libswresample-dev libavfilter-dev \
-  debian-keyring debian-archive-keyring apt-transport-https
+  "python$PYV-venv" "python$PYV-dev" build-essential pkg-config git curl \
+  ffmpeg debian-keyring debian-archive-keyring apt-transport-https
+# No libav*-dev: PyAV installs a wheel with ffmpeg already inside it.
 
 say "Service account"
 id -u "$APP_USER" >/dev/null 2>&1 || useradd --system --create-home --shell /usr/sbin/nologin "$APP_USER"
 
 say "Application code"
-if [ -d "$APP_DIR/.git" ]; then
-  git -C "$APP_DIR" pull --ff-only
-else
-  git clone --depth 1 "$REPO" "$APP_DIR"
-fi
+# The code is pushed here with deploy/sync.sh rather than cloned: the repo is a
+# private monorepo holding several unrelated projects, one of them gigabytes.
+[ -f "$APP_DIR/main.py" ] || { echo "No code at $APP_DIR — run deploy/sync.sh first." >&2; exit 1; }
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 
 say "Python environment"
-sudo -u "$APP_USER" python3 -m venv "$APP_DIR/.venv" 2>/dev/null || true
+[ -x "$APP_DIR/.venv/bin/python" ] || sudo -u "$APP_USER" python3 -m venv "$APP_DIR/.venv"
 # CPU-only torch first: sentence-transformers would otherwise pull the CUDA
 # build, which is gigabytes of code this machine has no card to run.
 sudo -u "$APP_USER" "$APP_DIR/.venv/bin/pip" install -q --upgrade pip
@@ -117,7 +131,21 @@ UNIT
 systemctl daemon-reload
 systemctl enable --now saira
 
-say "Caddy, for TLS"
+say "Reverse proxy"
+# A certificate needs the name to point here first. Until it does, serve plain
+# HTTP so the box can be checked — but browsers refuse microphone access to a
+# page that is not on HTTPS, so the assistant cannot hear anyone until the DNS
+# record exists and this script is run again.
+SERVER_IP=$(curl -fsS --max-time 10 https://api.ipify.org || hostname -I | awk '{print $1}')
+RESOLVED=$(getent hosts "$DOMAIN" | awk '{print $1}' | head -1 || true)
+if [ -n "$RESOLVED" ] && [ "$RESOLVED" = "$SERVER_IP" ]; then
+  TLS_READY=yes
+else
+  TLS_READY=no
+  echo "   $DOMAIN resolves to '${RESOLVED:-nothing}', this host is $SERVER_IP."
+  echo "   Serving plain HTTP for now; re-run once the A record is in place."
+fi
+
 # A certificate is not cosmetic here: browsers refuse microphone access to a
 # page that is not on HTTPS, so without it the assistant cannot hear anyone.
 if ! command -v caddy >/dev/null 2>&1; then
@@ -127,7 +155,8 @@ if ! command -v caddy >/dev/null 2>&1; then
     > /etc/apt/sources.list.d/caddy-stable.list
   apt-get update -qq && apt-get install -y -qq caddy
 fi
-cat > /etc/caddy/Caddyfile <<CADDY
+if [ "$TLS_READY" = yes ]; then
+  cat > /etc/caddy/Caddyfile <<CADDY
 $DOMAIN {
     encode zstd gzip
     # The voice socket is a long-lived stream; don't cut it off mid-sentence.
@@ -136,17 +165,37 @@ $DOMAIN {
     }
 }
 CADDY
+else
+  cat > /etc/caddy/Caddyfile <<CADDY
+:80 {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:3001 {
+        flush_interval -1
+    }
+}
+CADDY
+fi
 systemctl reload caddy || systemctl restart caddy
 
 say "Firewall"
+# Only enable the firewall once SSH is explicitly allowed, or this locks
+# everyone out of a machine that is reachable only over SSH.
 if command -v ufw >/dev/null 2>&1; then
-  ufw allow OpenSSH   >/dev/null 2>&1 || true
-  ufw allow 80/tcp    >/dev/null 2>&1 || true
-  ufw allow 443/tcp   >/dev/null 2>&1 || true
-  yes | ufw enable    >/dev/null 2>&1 || true
+  ufw allow 22/tcp  >/dev/null 2>&1 || true
+  ufw allow 80/tcp  >/dev/null 2>&1 || true
+  ufw allow 443/tcp >/dev/null 2>&1 || true
+  if ufw status | grep -q '22/tcp'; then
+    yes | ufw enable >/dev/null 2>&1 || true
+  else
+    echo "   Leaving the firewall off: the SSH rule did not take."
+  fi
 fi
 
-say "Done — https://$DOMAIN"
+if [ "$TLS_READY" = yes ]; then
+  say "Done — https://$DOMAIN"
+else
+  say "Done — http://$SERVER_IP (no certificate yet, so no microphone)"
+fi
 echo "Admin email:    $ADMIN_EMAIL"
 echo "Admin password: grep SAIRA_ADMIN_PASSWORD $APP_DIR/.env"
 echo
