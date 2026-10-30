@@ -94,6 +94,7 @@ async def synthesize_stream(
     if not text:
         return
 
+    mp3_bytes = b""
     try:
         if _has_telugu(text):
             log.info("Telugu TTS via edge-tts")
@@ -101,8 +102,26 @@ async def synthesize_stream(
         else:
             log.info("English TTS via Kokoro")
             mp3_bytes = await asyncio.to_thread(_synthesize_english, text)
-
-        if mp3_bytes:
-            await audio_queue.put(mp3_bytes)
     except Exception as exc:
-        log.exception("TTS error: %s", exc)
+        # Telugu goes out to Microsoft's voice service, which refuses some
+        # hosts outright — a datacenter address usually gets a 403. Kokoro is
+        # local and always answers, so say it in the English voice rather than
+        # return silence: a wrong accent beats an assistant that just stops.
+        log.warning("TTS failed (%s) — falling back to the local voice", exc)
+        try:
+            mp3_bytes = await asyncio.to_thread(_synthesize_english, text)
+        except Exception:
+            log.exception("Local voice failed too")
+
+    if not mp3_bytes:
+        # Nothing was speakable at all: say so, rather than leaving the person
+        # watching a robot that moved its mouth and made no sound.
+        log.warning("Nothing to speak for %r", text[:60])
+        try:
+            mp3_bytes = await asyncio.to_thread(
+                _synthesize_english, "Sorry, I could not say that out loud.")
+        except Exception:
+            log.exception("Could not synthesise the fallback line either")
+
+    if mp3_bytes:
+        await audio_queue.put(mp3_bytes)

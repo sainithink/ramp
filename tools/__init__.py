@@ -1,5 +1,8 @@
+import logging
 import os
 import sys
+
+log = logging.getLogger(__name__)
 
 from tools.weather import get_weather
 from tools.stories import get_story, list_stories
@@ -163,10 +166,62 @@ TOOL_DEFINITIONS = [
 ]
 
 
+def _clean_args(tool_name: str, tool_input: dict) -> dict:
+    """Keep only the arguments the tool actually declares.
+
+    Small models improvise: llama3.2 hands back the schema's own scaffolding
+    as arguments, and a stray {"type": "object"} turns into an unexpected
+    keyword argument that kills the whole reply mid-sentence.
+    """
+    schema = next((t for t in TOOL_DEFINITIONS if t["name"] == tool_name), None)
+    if not schema:
+        return {}
+    allowed = set(schema["input_schema"].get("properties", {}))
+
+    # Sometimes it hands back the schema itself — {"type": "object",
+    # "properties": {"city": ...}} — instead of filling it in. The real
+    # argument is then one level down, so look there before giving up.
+    if not (set(tool_input) & allowed) and isinstance(tool_input.get("properties"), dict):
+        nested = tool_input["properties"]
+        salvaged = {k: v for k, v in nested.items() if k in allowed and not isinstance(v, dict)}
+        if salvaged:
+            log.warning("%s: arguments arrived wrapped in a schema, unwrapped %s",
+                        tool_name, ", ".join(sorted(salvaged)))
+            tool_input = salvaged
+
+    extra = set(tool_input) - allowed
+    if extra:
+        log.warning("%s: ignoring argument(s) %s the model made up",
+                    tool_name, ", ".join(sorted(extra)))
+    return {k: v for k, v in tool_input.items() if k in allowed}
+
+
 async def dispatch(tool_name: str, tool_input: dict) -> str:
+    tool_input = _clean_args(tool_name, tool_input or {})
     if tool_name in DESKTOP_TOOLS and not desktop_tools_enabled():
         return ("That only works when I'm running on your own computer. "
                 "This one is hosted, so I can't reach your machine.")
+
+    # A missing required argument used to raise straight through the response
+    # pipeline, so one malformed tool call cost the user the entire answer.
+    # Say what is missing instead and let the model carry on talking.
+    schema = next((t for t in TOOL_DEFINITIONS if t["name"] == tool_name), None)
+    if schema:
+        missing = [r for r in schema["input_schema"].get("required", [])
+                   if r not in tool_input]
+        if missing:
+            log.warning("%s called without %s", tool_name, ", ".join(missing))
+            return (f"I need to know the {missing[0]} before I can do that — "
+                    "ask me again and say it.")
+
+    try:
+        return await _run(tool_name, tool_input)
+    except Exception as exc:
+        log.exception("%s failed: %s", tool_name, exc)
+        return "That didn't work just now. Tell the user briefly and move on."
+
+
+async def _run(tool_name: str, tool_input: dict) -> str:
 
     if tool_name == "get_weather":
         return await get_weather(**tool_input)
