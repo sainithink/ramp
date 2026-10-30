@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, select
 
-from core import auth
+from core import auth, otp
 from core.db import (
     PLAN_LIMITS, UsageEvent, User, get_session, record_usage,
     usage_this_month,
@@ -101,6 +101,27 @@ async def register_page(user=Depends(current_user)):
 async def app_page(user=Depends(current_user)):
     if not user:
         return RedirectResponse("/login", status_code=302)
+    if not user.is_verified:
+        return RedirectResponse("/verify", status_code=302)
+    return spa()
+
+
+@router.get("/verify", include_in_schema=False)
+async def verify_page(user=Depends(current_user)):
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    if user.is_verified:
+        return RedirectResponse("/app", status_code=302)
+    return spa()
+
+
+@router.get("/forgot", include_in_schema=False)
+async def forgot_page():
+    return spa()
+
+
+@router.get("/reset", include_in_schema=False)
+async def reset_page():
     return spa()
 
 
@@ -108,6 +129,8 @@ async def app_page(user=Depends(current_user)):
 async def admin_page(user=Depends(current_user)):
     if not user:
         return RedirectResponse("/login", status_code=302)
+    if not user.is_verified:
+        return RedirectResponse("/verify", status_code=302)
     if not user.is_admin:
         return RedirectResponse("/app", status_code=302)
     return spa()
@@ -139,9 +162,122 @@ async def api_register(body: RegisterBody):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
         payload = {"id": user.id, "email": user.email, "wake_name": user.wake_name,
                    "role": user.role}
-    resp = JSONResponse(payload)
+        # Read what the email needs before the session closes.
+        email, wake = user.email, user.wake_name
+        code = otp.issue(s, user, otp.VERIFY)
+
+    sent = await otp.send_code(email, wake, otp.VERIFY, code)
+    resp = JSONResponse({**payload, "verified": False, "code_sent": sent})
     _set_cookie(resp, payload["id"])
     return resp
+
+
+# ── Email verification ───────────────────────────────────────────────────────
+
+class CodeBody(BaseModel):
+    code: str
+
+
+@router.post("/api/verify/send")
+async def api_verify_send(user=Depends(require_user)):
+    with get_session() as s:
+        row = s.get(User, user.id)
+        if row.is_verified:
+            return {"verified": True, "code_sent": False}
+        email, wake = row.email, row.wake_name
+        try:
+            code = otp.issue(s, row, otp.VERIFY)
+        except otp.OtpError as exc:
+            raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, str(exc))
+    sent = await otp.send_code(email, wake, otp.VERIFY, code)
+    return {"verified": False, "code_sent": sent}
+
+
+@router.post("/api/verify/confirm")
+async def api_verify_confirm(body: CodeBody, user=Depends(require_user)):
+    with get_session() as s:
+        row = s.get(User, user.id)
+        if row.is_verified:
+            return {"verified": True}
+        try:
+            otp.verify(s, row, otp.VERIFY, body.code)
+        except otp.OtpError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+        row.email_verified_at = datetime.now(timezone.utc)
+        s.commit()
+    return {"verified": True}
+
+
+# ── Forgotten password ───────────────────────────────────────────────────────
+
+class ForgotBody(BaseModel):
+    email: str
+
+
+class ResetBody(BaseModel):
+    email: str
+    code: str
+    new_password: str
+
+
+# Always the same answer, so the form cannot be used to find out who has an
+# account here.
+_FORGOT_REPLY = {"ok": True,
+                 "detail": "If that address has an account, a code is on its way."}
+
+
+@router.post("/api/password/forgot")
+async def api_password_forgot(body: ForgotBody):
+    try:
+        email = auth.normalise_email(body.email)
+    except ValueError:
+        return _FORGOT_REPLY
+
+    with get_session() as s:
+        user = s.scalar(select(User).where(User.email == email))
+        if not user or not user.is_active:
+            return _FORGOT_REPLY
+        wake = user.wake_name
+        try:
+            code = otp.issue(s, user, otp.RESET)
+        except otp.OtpError:
+            return _FORGOT_REPLY          # rate limited; still say nothing
+
+    await otp.send_code(email, wake, otp.RESET, code)
+    return _FORGOT_REPLY
+
+
+@router.post("/api/password/reset")
+async def api_password_reset(body: ResetBody):
+    try:
+        email = auth.normalise_email(body.email)
+    except ValueError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "That code is not valid.")
+
+    with get_session() as s:
+        user = s.scalar(select(User).where(User.email == email))
+        if not user or not user.is_active:
+            # Same wording as a wrong code, so this reveals nothing either.
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "That code is not valid.")
+        # Check the password first: verifying spends the code, and a password
+        # that is merely too short should not cost someone their only code.
+        if len(body.new_password) < auth.MIN_PASSWORD:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Password must be at least {auth.MIN_PASSWORD} characters.")
+        try:
+            otp.verify(s, user, otp.RESET, body.code)
+        except otp.OtpError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+        user.password_hash = auth.hash_password(body.new_password)
+        user.password_changed_at = datetime.now(timezone.utc)
+        # Getting the code proves they hold the inbox, which is what
+        # verification was asking for in the first place.
+        if user.email_verified_at is None:
+            user.email_verified_at = datetime.now(timezone.utc)
+        s.commit()
+    return {"ok": True}
 
 
 @router.post("/api/login")
@@ -176,6 +312,7 @@ async def api_me(user=Depends(require_user)):
         "wake_name": user.wake_name, "role": user.role, "plan": user.plan,
         "used": used, "limit": user.monthly_limit,
         "remaining": max(0, user.monthly_limit - used),
+        "verified": user.is_verified,
     }
 
 

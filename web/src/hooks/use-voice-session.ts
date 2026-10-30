@@ -218,6 +218,10 @@ export function useVoiceSession({ onExchange }: Options = {}) {
           window.location.href = '/login'
           return
         }
+        if (ev.code === 4402) {
+          window.location.href = '/verify'
+          return
+        }
         if (ev.code === 4403) {
           setQuota('This account has been disabled.')
           return

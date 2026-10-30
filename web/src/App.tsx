@@ -8,6 +8,9 @@ import { Loader2 } from 'lucide-react'
 const LandingPage = lazy(() => import('@/pages/landing'))
 const LoginPage = lazy(() => import('@/pages/login'))
 const RegisterPage = lazy(() => import('@/pages/register'))
+const VerifyPage = lazy(() => import('@/pages/verify'))
+const ForgotPage = lazy(() => import('@/pages/forgot'))
+const ResetPage = lazy(() => import('@/pages/reset'))
 const AssistantPage = lazy(() => import('@/pages/assistant'))
 const AdminPage = lazy(() => import('@/pages/admin'))
 
@@ -30,6 +33,9 @@ export default function App() {
             <Route path="/" element={<LandingPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
+            <Route path="/verify" element={<VerifyPage />} />
+            <Route path="/forgot" element={<ForgotPage />} />
+            <Route path="/reset" element={<ResetPage />} />
             <Route path="/app" element={<AssistantPage />} />
             <Route path="/admin" element={<AdminPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />

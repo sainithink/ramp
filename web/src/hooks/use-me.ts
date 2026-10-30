@@ -8,7 +8,13 @@ export function useMe() {
 
   const reload = useCallback(async () => {
     try {
-      setMe(await api.me())
+      const next = await api.me()
+      // An account that never confirmed its address cannot use the assistant.
+      if (!next.verified && window.location.pathname !== '/verify') {
+        window.location.href = '/verify'
+        return
+      }
+      setMe(next)
     } catch (ex) {
       if (ex instanceof ApiError && ex.status === 401) {
         window.location.href = '/login'

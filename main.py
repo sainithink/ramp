@@ -9,8 +9,13 @@ from datetime import datetime
 
 import av
 import numpy as np
+from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
+
+# Before any core import: these modules read their configuration — the database
+# URL, the SMTP account, the administrator's credentials — at import time.
+load_dotenv()
 
 from core.session import VoiceSession
 from core.whisper_client import get_model, _transcribe_pcm
@@ -104,6 +109,8 @@ def _is_stop_command(text: str) -> bool:
 async def lifespan(app: FastAPI):
     log.info("Saira starting up…")
     init_db()
+    with get_session() as s:
+        auth.ensure_admin(s)
     await asyncio.gather(
         asyncio.to_thread(get_model),
         asyncio.to_thread(get_kokoro),
@@ -148,6 +155,10 @@ async def voice_endpoint(ws: WebSocket):
         if not user.is_active:
             await ws.close(code=4403, reason="Account unavailable")
             log.info(">>> WebSocket rejected: inactive user")
+            return
+        if not user.is_verified:
+            await ws.close(code=4402, reason="Email not verified")
+            log.info(">>> WebSocket rejected: unverified email")
             return
         user_id, wake_name, display = user.id, user.wake_name, user.display_name
 

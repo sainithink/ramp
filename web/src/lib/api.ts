@@ -10,6 +10,7 @@ export type Me = {
   used: number
   limit: number
   remaining: number
+  verified: boolean
 }
 
 export type AdminUser = {
@@ -83,6 +84,30 @@ export const api = {
     request<{ wake_name: string }>('/api/me/wake-name', {
       method: 'POST',
       body: JSON.stringify({ wake_name }),
+    }),
+
+  sendVerifyCode: () =>
+    request<{ verified: boolean; code_sent: boolean }>('/api/verify/send', {
+      method: 'POST',
+      body: '{}',
+    }),
+
+  confirmVerifyCode: (code: string) =>
+    request<{ verified: boolean }>('/api/verify/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    }),
+
+  forgotPassword: (email: string) =>
+    request<{ ok: boolean; detail: string }>('/api/password/forgot', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }),
+
+  resetPassword: (email: string, code: string, new_password: string) =>
+    request<{ ok: boolean }>('/api/password/reset', {
+      method: 'POST',
+      body: JSON.stringify({ email, code, new_password }),
     }),
 
   changePassword: (current_password: string, new_password: string) =>

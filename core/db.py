@@ -61,9 +61,17 @@ class User(Base):
     # Set when the password changes. Sessions issued before this are refused,
     # so changing the password actually signs other devices out.
     password_changed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # None until the emailed activation code is entered.
+    email_verified_at:   Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     usage: Mapped[list["UsageEvent"]] = relationship(
         back_populates="user", cascade="all, delete-orphan")
+    codes: Mapped[list["OtpCode"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan")
+
+    @property
+    def is_verified(self) -> bool:
+        return self.email_verified_at is not None
     blobs: Mapped[list["UserBlob"]] = relationship(
         back_populates="user", cascade="all, delete-orphan")
 
@@ -130,7 +138,30 @@ def get_session() -> Session:
     return Session(_engine, future=True)
 
 
-def _add_missing_columns() -> None:
+class OtpCode(Base):
+    """A one-time code emailed to a user, for activation or a password reset.
+
+    The code itself is never stored — only an HMAC of it — so a copy of the
+    database does not hand someone a working code. Short expiry and an attempt
+    cap do the rest of the work, because six digits is a small search space.
+    """
+    __tablename__ = "otp_codes"
+
+    id:         Mapped[str] = mapped_column(String(36), primary_key=True,
+                                            default=lambda: str(uuid.uuid4()))
+    user_id:    Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"),
+                                            index=True)
+    purpose:    Mapped[str] = mapped_column(String(16))        # verify | reset
+    code_hash:  Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    attempts:   Mapped[int] = mapped_column(Integer, default=0)
+
+    user: Mapped["User"] = relationship(back_populates="codes")
+
+
+def _add_missing_columns() -> list[str]:
     """Add nullable columns that exist on the models but not yet in the file.
 
     There is no migration tool here and create_all() only ever creates whole
@@ -138,6 +169,7 @@ def _add_missing_columns() -> None:
     database. Only nullable columns can be handled this way; anything more
     involved needs a real migration.
     """
+    added: list[str] = []
     inspector = inspect(_engine)
     with _engine.begin() as conn:
         for table in Base.metadata.sorted_tables:
@@ -154,12 +186,24 @@ def _add_missing_columns() -> None:
                 type_sql = column.type.compile(_engine.dialect)
                 conn.execute(text(
                     f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {type_sql}'))
+                added.append(f"{table.name}.{column.name}")
                 log.info("Added column %s.%s", table.name, column.name)
+    return added
 
 
 def init_db() -> None:
     Base.metadata.create_all(_engine)
-    _add_missing_columns()
+    added = _add_missing_columns()
+
+    # Accounts that predate email verification were never asked to verify, so
+    # grandfather them in rather than locking their owners out.
+    if "users.email_verified_at" in added:
+        with Session(_engine) as s:
+            grandfathered = s.query(User).update(
+                {User.email_verified_at: _now()}, synchronize_session=False)
+            s.commit()
+        if grandfathered:
+            log.info("Marked %d pre-existing account(s) as verified", grandfathered)
 
 
 # ── Usage ────────────────────────────────────────────────────────────────────

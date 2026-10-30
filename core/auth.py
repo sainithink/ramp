@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 import bcrypt
 import jwt
 from email_validator import EmailNotValidError, validate_email
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from core.db import User
@@ -147,6 +147,70 @@ class AuthError(Exception):
     pass
 
 
+# ── The administrator ────────────────────────────────────────────────────────
+
+ADMIN_EMAIL_ENV = "SAIRA_ADMIN_EMAIL"
+ADMIN_PASSWORD_ENV = "SAIRA_ADMIN_PASSWORD"
+ADMIN_NAME_ENV = "SAIRA_ADMIN_NAME"
+
+
+def ensure_admin(session: Session) -> User | None:
+    """Create or repair the administrator account described by the environment.
+
+    Nobody is made an administrator by signing up — ordinary accounts never
+    see the admin console at all. The one administrator is declared in .env,
+    which also makes it the way back in if its password is ever lost: change
+    the variable, restart, sign in.
+    """
+    password = (os.environ.get(ADMIN_PASSWORD_ENV) or "").strip()
+    if not password:
+        log.warning("%s is not set — no administrator account exists. "
+                    "Set it in .env and restart to create one.", ADMIN_PASSWORD_ENV)
+        return None
+
+    try:
+        email = normalise_email(os.environ.get(ADMIN_EMAIL_ENV) or "admin@saira.local")
+    except ValueError as exc:
+        log.error("%s is not a valid address: %s", ADMIN_EMAIL_ENV, exc)
+        return None
+
+    display = (os.environ.get(ADMIN_NAME_ENV) or "Admin").strip()[:80]
+    user = session.scalar(select(User).where(User.email == email))
+
+    if user is None:
+        user = User(
+            email=email,
+            password_hash=hash_password(password),
+            display_name=display,
+            wake_name="Saira",
+            role="admin",
+            email_verified_at=datetime.now(timezone.utc),   # no inbox to confirm from
+        )
+        session.add(user)
+        session.commit()
+        log.info("Created the administrator account %s", email)
+        return user
+
+    # Keep the account in step with .env, so editing it is a real recovery path.
+    changed = []
+    if not verify_password(password, user.password_hash):
+        user.password_hash = hash_password(password)
+        # Not password_changed_at: that would void this boot's own sessions on
+        # every restart. .env changing is a deliberate act by the operator.
+        changed.append("password")
+    if user.role != "admin":
+        user.role, _ = "admin", changed.append("role")
+    if not user.is_active:
+        user.is_active, _ = True, changed.append("active")
+    if user.email_verified_at is None:
+        user.email_verified_at, _ = datetime.now(timezone.utc), changed.append("verified")
+    if changed:
+        session.commit()
+        log.info("Administrator %s updated from the environment (%s)",
+                 email, ", ".join(changed))
+    return user
+
+
 def register(session: Session, email: str, password: str,
              wake_name: str = "Saira", display_name: str = "") -> User:
     email = normalise_email(email)
@@ -160,16 +224,12 @@ def register(session: Session, email: str, password: str,
     if session.scalar(select(User).where(User.email == email)):
         raise AuthError("An account with that email already exists.")
 
-    # First account to register becomes the admin — there is no other way to
-    # bootstrap one, and it avoids shipping default credentials.
-    first = session.scalar(select(func.count()).select_from(User)) == 0
-
     user = User(
         email=email,
         password_hash=hash_password(password),
         wake_name=wake,
         display_name=(display_name or email.split("@")[0]).strip()[:80],
-        role="admin" if first else "user",
+        role="user",
     )
     session.add(user)
     session.commit()
