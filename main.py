@@ -39,6 +39,11 @@ SILENCE_THRESHOLD     = 0.02  # RMS below this = silence (ignores background TV)
 RMS_DECODE_EVERY      = 3     # decode every 3rd chunk — full re-decode is O(N²)
 SILENCE_FRAMES_NEEDED = 3     # 3 × ~300ms = ~0.9s of silence to stop
 MIN_SPEECH_FRAMES     = 2     # must hear speech before silence counts
+# A hard ceiling on one utterance. Silence detection needs the room to go quiet,
+# and in a room that never does — a fan, traffic, a television — RMS stays above
+# the threshold for ever and the utterance is never transcribed at all. Better a
+# long sentence cut off than an assistant that listens and never answers.
+MAX_SPEECH_FRAMES     = 50    # 50 × ~300ms ≈ 15s
 
 # Wake-word detection
 WAKE_CHECK_CHUNKS = 15        # check every 15 × 100ms = 1.5s
@@ -442,8 +447,12 @@ async def voice_endpoint(ws: WebSocket):
 
                         log.info("RMS=%.4f speech=%d silence=%d/%d", rms, speech_frames, silence_frames, SILENCE_FRAMES_NEEDED)
 
-                        if silence_frames >= SILENCE_FRAMES_NEEDED and speech_frames >= MIN_SPEECH_FRAMES:
-                            log.info(">>> Silence detected — transcribing %d cmd chunks", len(command_raw))
+                        hit_ceiling = speech_frames >= MAX_SPEECH_FRAMES
+                        if (silence_frames >= SILENCE_FRAMES_NEEDED
+                                and speech_frames >= MIN_SPEECH_FRAMES) or hit_ceiling:
+                            log.info(">>> %s — transcribing %d cmd chunks",
+                                     "Utterance ceiling reached" if hit_ceiling else "Silence detected",
+                                     len(command_raw))
                             mode = "processing"
                             chunks_to_transcribe = command_raw[:]
                             hdr = webm_header

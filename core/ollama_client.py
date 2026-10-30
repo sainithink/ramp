@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from typing import AsyncIterator, Callable, Awaitable, Optional
 
@@ -12,8 +13,36 @@ from tools import TOOL_DEFINITIONS, available_tool_names, dispatch
 
 log = logging.getLogger(__name__)
 
-OLLAMA_URL = "http://localhost:11434/api/chat"
-MODEL = "llama3.2"
+OLLAMA_URL = os.environ.get("SAIRA_OLLAMA_URL", "http://localhost:11434/api/chat")
+MODEL = os.environ.get("SAIRA_OLLAMA_MODEL", "llama3.2")
+
+# Hyperthreads do not help llama.cpp: on the 4-core/8-thread server, four
+# threads measured 6.0 tok/s against 4.2 for eight. Unset means Ollama decides.
+_THREADS = os.environ.get("SAIRA_OLLAMA_THREADS", "").strip()
+
+# Ollama drops the model after five idle minutes by default. Reloading it costs
+# a couple of seconds plus a cold prompt pass — about five seconds before the
+# first word is spoken, every time somebody comes back after a pause.
+#
+# The value has to keep its type. Ollama reads a number as seconds, with -1
+# meaning never unload, but parses a string as a duration — and "-1" is not a
+# duration, so sending it as text makes every request a 400.
+def _parse_keep_alive(raw: str):
+    raw = (raw or "").strip()
+    try:
+        return int(raw)
+    except ValueError:
+        return raw or "30m"
+
+
+_KEEP_ALIVE = _parse_keep_alive(os.environ.get("SAIRA_OLLAMA_KEEP_ALIVE", "-1"))
+
+
+def _options(**extra) -> dict:
+    opts = {"num_predict": 150, "temperature": 0.7, **extra}
+    if _THREADS.isdigit():
+        opts["num_thread"] = int(_THREADS)
+    return opts
 
 _BASE_PROMPT = (
     "You are Saira, a voice assistant. You talk like a real person — casual, warm, a little witty. "
@@ -146,7 +175,7 @@ async def warmup_llm() -> None:
                 "messages": [{"role": "user", "content": "hi"}],
                 "stream": False,
                 "options": {"num_predict": 1},
-                "keep_alive": "30m",
+                "keep_alive": _KEEP_ALIVE,
             })
         log.info("Ollama warmed up (%s)", MODEL)
     except Exception as exc:
@@ -266,7 +295,7 @@ async def get_response(
 
     full_response = []
     tools = _tools_for_query(transcript)
-    options = {"num_predict": 150, "temperature": 0.7}
+    options = _options()
 
     async with httpx.AsyncClient(timeout=120) as client:
         # Fast path: no tools needed — stream tokens so TTS starts immediately
@@ -277,7 +306,7 @@ async def get_response(
                 "messages": messages,
                 "stream": True,
                 "options": options,
-                "keep_alive": "30m",
+                "keep_alive": _KEEP_ALIVE,
             }
             async with client.stream("POST", OLLAMA_URL, json=payload) as streamed:
                 async for line in streamed.aiter_lines():
@@ -319,7 +348,7 @@ async def get_response(
                 "tools": tools,
                 "stream": False,
                 "options": options,
-                "keep_alive": "30m",
+                "keep_alive": _KEEP_ALIVE,
             }
 
             resp = await client.post(OLLAMA_URL, json=payload)

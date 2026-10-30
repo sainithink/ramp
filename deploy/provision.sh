@@ -174,9 +174,14 @@ fi
 if [ "$TLS_MODE" = acme ]; then
   TLS_LINE=""
   SITE_ADDR="$DOMAIN"
+  # Caddy answers only for site addresses it was given. Without this, reaching
+  # the server by its address fails to connect, which looks exactly like the
+  # server being down.
+  IP_BLOCK=$(printf 'https://%s {\n    tls internal\n    redir https://%s{uri} permanent\n}\n' "$SERVER_IP" "$DOMAIN")
 else
   TLS_LINE="    tls internal"
   SITE_ADDR="https://$SERVER_IP"
+  IP_BLOCK=""
 fi
 cat > /etc/caddy/Caddyfile <<CADDY
 $SITE_ADDR {
@@ -188,8 +193,11 @@ $TLS_LINE
     }
 }
 
+$IP_BLOCK
+
 # Anyone arriving on plain HTTP is sent to the secure origin, which is the only
-# one the browser will give a microphone to.
+# one the browser will give a microphone to. Caddy still answers the ACME
+# challenge on this port itself, ahead of the redirect.
 :80 {
     redir https://{host}{uri} permanent
 }
