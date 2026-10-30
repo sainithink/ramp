@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Provision SAIRA on a fresh Ubuntu 24.04 host. Run as root, on the server:
 #
-#     bash provision.sh saira.sainith.in you@example.com
+#     bash provision.sh saira.sainith.in admin@example.com   # with a domain
+#     bash provision.sh 74.91.31.50      admin@example.com   # address only
 #
-# Safe to re-run: every step checks before it acts. The second argument is the
-# address Let's Encrypt uses for expiry warnings.
+# Safe to re-run: every step checks before it acts. Given a name that points
+# here, Caddy gets a real certificate; given an address, it signs its own and
+# the browser warns once. Either way the site is HTTPS, because a page served
+# over plain HTTP is refused the microphone and the assistant goes deaf.
 set -euo pipefail
 
 DOMAIN="${1:?usage: provision.sh <domain> <admin-email>}"
@@ -13,6 +16,31 @@ APP_DIR=/opt/saira
 APP_USER=saira
 
 say() { printf '\n\033[1;32m==> %s\033[0m\n' "$*"; }
+
+SERVER_IP=$(curl -fsS --max-time 10 https://api.ipify.org || hostname -I | awk '{print $1}')
+
+# HTTPS is not optional here. Browsers only hand a page the microphone on a
+# secure origin, so plain HTTP gives a site you can sign into and an assistant
+# that cannot hear a word.
+if [[ "$DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  # No domain: Caddy issues its own certificate for the address. The browser
+  # will warn once, because nothing vouches for that certificate, but after
+  # you accept it the origin counts as secure and the microphone works.
+  TLS_MODE=internal
+  SITE="https://$DOMAIN"
+  echo "   Deploying to the address itself with a self-signed certificate."
+else
+  RESOLVED=$(getent hosts "$DOMAIN" | awk '{print $1}' | head -1 || true)
+  if [ -n "$RESOLVED" ] && [ "$RESOLVED" = "$SERVER_IP" ]; then
+    TLS_MODE=acme
+    SITE="https://$DOMAIN"
+  else
+    TLS_MODE=internal
+    SITE="https://$SERVER_IP"
+    echo "   $DOMAIN resolves to '${RESOLVED:-nothing}', this host is $SERVER_IP."
+    echo "   Falling back to a self-signed certificate for the address."
+  fi
+fi
 
 say "System packages"
 export DEBIAN_FRONTEND=noninteractive
@@ -83,7 +111,7 @@ if [ ! -f "$APP_DIR/.env" ]; then
     'import secrets,string; a=string.ascii_letters+string.digits+"!@#$%^&*-_=+"; print("".join(secrets.choice(a) for _ in range(24)))')
   cat > "$APP_DIR/.env" <<ENV
 SAIRA_MASTER_KEY=$MASTER
-SAIRA_APP_URL=https://$DOMAIN
+SAIRA_APP_URL=$SITE
 
 # Hosted: the tools that drive a desktop are off, because here "open this app"
 # would mean the server's apps.
@@ -136,18 +164,6 @@ say "Reverse proxy"
 # HTTP so the box can be checked — but browsers refuse microphone access to a
 # page that is not on HTTPS, so the assistant cannot hear anyone until the DNS
 # record exists and this script is run again.
-SERVER_IP=$(curl -fsS --max-time 10 https://api.ipify.org || hostname -I | awk '{print $1}')
-RESOLVED=$(getent hosts "$DOMAIN" | awk '{print $1}' | head -1 || true)
-if [ -n "$RESOLVED" ] && [ "$RESOLVED" = "$SERVER_IP" ]; then
-  TLS_READY=yes
-else
-  TLS_READY=no
-  echo "   $DOMAIN resolves to '${RESOLVED:-nothing}', this host is $SERVER_IP."
-  echo "   Serving plain HTTP for now; re-run once the A record is in place."
-fi
-
-# A certificate is not cosmetic here: browsers refuse microphone access to a
-# page that is not on HTTPS, so without it the assistant cannot hear anyone.
 if ! command -v caddy >/dev/null 2>&1; then
   curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/gpg.key \
     | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
@@ -155,26 +171,29 @@ if ! command -v caddy >/dev/null 2>&1; then
     > /etc/apt/sources.list.d/caddy-stable.list
   apt-get update -qq && apt-get install -y -qq caddy
 fi
-if [ "$TLS_READY" = yes ]; then
-  cat > /etc/caddy/Caddyfile <<CADDY
-$DOMAIN {
+if [ "$TLS_MODE" = acme ]; then
+  TLS_LINE=""
+  SITE_ADDR="$DOMAIN"
+else
+  TLS_LINE="    tls internal"
+  SITE_ADDR="https://$SERVER_IP"
+fi
+cat > /etc/caddy/Caddyfile <<CADDY
+$SITE_ADDR {
+$TLS_LINE
     encode zstd gzip
     # The voice socket is a long-lived stream; don't cut it off mid-sentence.
     reverse_proxy 127.0.0.1:3001 {
         flush_interval -1
     }
 }
-CADDY
-else
-  cat > /etc/caddy/Caddyfile <<CADDY
+
+# Anyone arriving on plain HTTP is sent to the secure origin, which is the only
+# one the browser will give a microphone to.
 :80 {
-    encode zstd gzip
-    reverse_proxy 127.0.0.1:3001 {
-        flush_interval -1
-    }
+    redir https://{host}{uri} permanent
 }
 CADDY
-fi
 systemctl reload caddy || systemctl restart caddy
 
 say "Firewall"
@@ -191,10 +210,10 @@ if command -v ufw >/dev/null 2>&1; then
   fi
 fi
 
-if [ "$TLS_READY" = yes ]; then
-  say "Done — https://$DOMAIN"
-else
-  say "Done — http://$SERVER_IP (no certificate yet, so no microphone)"
+say "Done — $SITE"
+if [ "$TLS_MODE" = internal ]; then
+  echo "   The certificate is self-signed, so the browser will warn once."
+  echo "   Accept it and the microphone will work."
 fi
 echo "Admin email:    $ADMIN_EMAIL"
 echo "Admin password: grep SAIRA_ADMIN_PASSWORD $APP_DIR/.env"
